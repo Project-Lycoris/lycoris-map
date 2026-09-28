@@ -222,3 +222,20 @@
         padding: 10px 14px;
     }
 }
+
+.admin-place-group {
+    border: 1px solid #d9d1e1;
+    border-radius: 24px;
+    overflow: hidden;
+}
+.admin-place-group .admin-card {
+    border-radius: 0;
+}
+.admin-place-group .admin-card + .admin-card {
+    border-top: 1px solid #e8e0ec;
+}
+.admin-submission-kind {
+    color: #65558f;
+    font-weight: 600;
+    font-size: 15px;
+}

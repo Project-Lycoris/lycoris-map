@@ -3,12 +3,10 @@ import { useSession } from '@/features/auth/SessionProvider'
 import { privateKeys, type PrivateScope } from '@/shared/query/keys'
 import { ApiError } from '@/shared/api/ApiError'
 import { readUsers } from './api'
-export type Access = 'ready' | 'verify' | 'denied' | 'unavailable'
+export type Access = 'ready' | 'denied' | 'unavailable'
 export function deniedAccess(error: unknown): Exclude<Access, 'ready'> | null {
     if (!(error instanceof ApiError) || error.status !== 403) return null
     if (error.accessDenied) return 'denied'
-    if (error.message === '需要二级密码' || error.message === '二级密码已过期，请重新验证')
-        return 'verify'
     return 'unavailable'
 }
 export const adminKeys = (scope: PrivateScope) => [...privateKeys.scope(scope), 'admin'] as const

@@ -1,6 +1,5 @@
 import { useUi } from '@/shared/i18n/ui'
 const messages = {
-    'Secondary verification is not configured on this server.': '此服务器尚未配置管理二次验证。',
     'Active flag': '有效标记',
     Yes: '是',
     No: '否',
@@ -11,18 +10,17 @@ const messages = {
     'Restore this account?': '恢复此账号？',
     Administration: '管理',
     'Back to map': '返回地图',
+    'New place': '新增点位',
+    'Content changes': '内容修改',
+    'Photo submission': '图片提交',
     Review: '审核',
     'All places': '全部点位',
     Users: '用户',
     Markers: '点位',
     Edits: '文字提案',
     Images: '图片提案',
-    'Secondary verification': '二次验证',
-    'Admin passcode': '管理密码',
-    Verify: '验证',
     'Access denied.': '此账号没有管理权限。',
     'Could not confirm access. Try again.': '无法确认权限，请重试。',
-    'Verification failed. Check the passcode and try again.': '验证失败，请检查管理密码后重试。',
     Approve: '通过',
     Reject: '拒绝',
     Edit: '编辑',
@@ -40,6 +38,8 @@ const messages = {
     Active: '正常',
     Admin: '管理员',
     User: '用户',
+    'Saved, but the list could not refresh. Refresh before reviewing another item.':
+        '已保存，但列表刷新失败。请刷新后再审核其他内容。',
     'Completed.': '操作已完成。',
     'The item changed. Review the refreshed list.': '内容已变化，请查看刷新后的列表。',
     'The outcome could not be confirmed. Refresh and inspect the item before trying again.':
@@ -52,9 +52,6 @@ const messages = {
     'This disables the account and invalidates its sessions.': '这会停用账号并使其登录会话失效。',
     'This resets the password to the server-configured default and invalidates existing sessions.':
         '这会将密码重置为服务器配置的默认值，并使现有登录会话失效。',
-    'Clear missing image references': '清理失效图片引用',
-    'This clears image addresses only when the server file is missing. It does not delete places or image files.':
-        '仅在服务器图片文件不存在时清空对应图片地址，不删除点位或图片文件。',
     'Proposed changes': '提议的修改',
     'Current place': '当前点位',
     'Submitted by': '提交者',

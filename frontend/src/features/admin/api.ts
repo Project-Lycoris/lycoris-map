@@ -70,14 +70,7 @@ export async function readUsers(page: number, q: string, signal: AbortSignal, si
         await request('/api/admin/users', { query: { page, size, q }, signal, cache: 'no-store' }),
     )
 }
-export async function verify(passcode: string, signal: AbortSignal) {
-    await request('/api/admin/verify', {
-        method: 'POST',
-        json: { passcode },
-        signal,
-        cache: 'no-store',
-    })
-}
+
 export async function readMarkers(all: boolean, language: Language, signal: AbortSignal) {
     return markerListSchema.parse(
         await request(`${prefix}/${all ? 'all' : 'pending'}`, {
@@ -137,17 +130,7 @@ export async function restoreMarker(value: number, signal: AbortSignal) {
         cache: 'no-store',
     })
 }
-export async function cleanupImages(signal: AbortSignal) {
-    return z
-        .object({ checked: z.number().int(), cleared: z.number().int(), message: z.string() })
-        .parse(
-            await request(`${prefix}/cleanup-missing-images`, {
-                method: 'POST',
-                signal,
-                cache: 'no-store',
-            }),
-        )
-}
+
 export async function changeUser(
     value: number,
     action: 'disable' | 'restore' | 'reset-password',

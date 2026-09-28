@@ -51,8 +51,8 @@ it('classifies only the exact backend role denial shape, preserving other 403 me
             ),
             'denied',
         ],
-        [new Response('需要二级密码', { status: 403 }), 'verify'],
-        [new Response('二级密码已过期，请重新验证', { status: 403 }), 'verify'],
+        [new Response('需要二级密码', { status: 403 }), 'unavailable'],
+        [new Response('二级密码已过期，请重新验证', { status: 403 }), 'unavailable'],
         [json({ status: 403, error: 'Forbidden' }, 403), 'unavailable'],
     ] as const) {
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response))

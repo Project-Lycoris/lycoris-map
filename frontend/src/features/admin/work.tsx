@@ -76,17 +76,33 @@ export function AdminWork({ admin, children }: { admin: Admin; children: ReactNo
                           : 'The request failed. Refresh and try again.',
                 )
         } finally {
-            if (store.isCurrent(scope)) {
-                // A lost response can follow a committed write. Refresh; never replay writes.
-                await Promise.all([
-                    client.invalidateQueries({ queryKey: privateKeys.scope(scope) }),
-                    client.invalidateQueries({ queryKey: publicKeys.markers() }),
-                ])
-                setBusy(false)
-                restore()
+            try {
+                if (store.isCurrent(scope)) {
+                    // Refresh business data, not the dashboard's access gate. Each
+                    // API request still checks the current role on the server.
+                    // Never replay a write whose response may have been lost.
+                    await Promise.all([
+                        client.invalidateQueries({
+                            queryKey: privateKeys.scope(scope),
+                            predicate: (query) => query.queryKey.at(-1) !== 'access',
+                        }),
+                        client.invalidateQueries({ queryKey: publicKeys.markers() }),
+                    ])
+                }
+            } catch {
+                if (success && store.isCurrent(scope))
+                    setMessage(
+                        'Saved, but the list could not refresh. Refresh before reviewing another item.',
+                    )
+            } finally {
+                running.current = false
+                if (store.isCurrent(scope)) {
+                    setBusy(false)
+                    restore()
+                }
             }
-            running.current = false
         }
+
         return success
     }
     return (
