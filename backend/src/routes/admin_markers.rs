@@ -1,11 +1,11 @@
-//! AdminMarkerController 的图片提案与失效引用清理路由（4 条）。
+//! Image moderation routes and the retired cleanup endpoint.
 //!
-//! 全部要求 [`VerifiedAdmin`]：未登录 → 安全入口固定 401 JSON；已认证非管理员 → Spring Boot
-//! 默认 403 JSON；管理员未二次验证/已过期 → 中文纯文本 403。业务逻辑全部交给已验收的
+//! 全部要求 [`AdminUser`]：未登录 → 安全入口固定 401 JSON；已认证非管理员 → Spring Boot
+//! 默认 403 JSON。业务逻辑全部交给已验收的
 //! [`MediaService`](crate::media::MediaService)（事务/授权/缓存）与
 //! [`MarkerService`](crate::modules::markers::service::MarkerService) 本地化，**不在 handler
 //! 手写 SQL 或二次更新**。成功体：审批为普通 JSON 本地化 `MarkerDto`（带 `Vary`）、
-//! 待审清单为普通 JSON 数组、驳回为 200 空体、清理为 `{checked,cleared,message}`；
+//! 待审清单为普通 JSON 数组、驳回为 200 空体、旧清理入口为 410；
 //! 业务错误为中文纯文本。
 
 use axum::extract::{Path, Query, State};
@@ -14,7 +14,7 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
 use crate::app::AppState;
-use crate::auth::{Identity, VerifiedAdmin};
+use crate::auth::{AdminUser, Identity};
 use crate::error::ErrorShape;
 use crate::modules::markers::http::json_marker;
 use crate::modules::markers::localization;
@@ -37,7 +37,7 @@ fn viewer_of<'a>(public_id: &'a str, identity: &'a Identity) -> Viewer<'a> {
 }
 
 /// GET /api/admin/markers/pending-images
-pub async fn pending_images(State(state): State<AppState>, admin: VerifiedAdmin) -> Response {
+pub async fn pending_images(State(state): State<AppState>, admin: AdminUser) -> Response {
     let admin = admin.0;
     let public_id = admin.user.public_id.to_string();
     let viewer = viewer_of(&public_id, &admin);
@@ -50,7 +50,7 @@ pub async fn pending_images(State(state): State<AppState>, admin: VerifiedAdmin)
 /// POST /api/admin/markers/image-proposals/{id}/approve
 pub async fn approve_image_proposal(
     State(state): State<AppState>,
-    admin: VerifiedAdmin,
+    admin: AdminUser,
     Path(id): Path<i64>,
     headers: HeaderMap,
     Query(params): Query<LangOnly>,
@@ -77,7 +77,7 @@ pub async fn approve_image_proposal(
 /// POST /api/admin/markers/image-proposals/{id}/reject
 pub async fn reject_image_proposal(
     State(state): State<AppState>,
-    admin: VerifiedAdmin,
+    admin: AdminUser,
     Path(id): Path<i64>,
 ) -> Response {
     let admin = admin.0;
@@ -96,15 +96,8 @@ pub async fn reject_image_proposal(
 }
 
 /// POST /api/admin/markers/cleanup-missing-images
-pub async fn cleanup_missing_images(
-    State(state): State<AppState>,
-    admin: VerifiedAdmin,
-) -> Response {
-    let admin = admin.0;
-    let public_id = admin.user.public_id.to_string();
-    let viewer = viewer_of(&public_id, &admin);
-    match state.media.cleanup_missing_images(&viewer).await {
-        Ok(result) => web::json(StatusCode::OK, web::to_json(&result)),
-        Err(error) => media_error_response(error, ErrorShape::Text),
-    }
+pub async fn cleanup_missing_images(_admin: AdminUser) -> Response {
+    // Retire the old destructive entry point as well as its UI. Cached clients
+    // must never clear stored references based on a transient storage failure.
+    web::text(StatusCode::GONE, "批量清理功能已停用")
 }

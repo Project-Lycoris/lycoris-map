@@ -58,8 +58,6 @@ impl TestEnv {
         config.email_verification_secret = Some("synthetic-email-secret-at-least-32-bytes".into());
         config.write_allowed_origins = vec![HeaderValue::from_static(ALLOWED_ORIGIN)];
         config.cors_allowed_origins = vec![HeaderValue::from_static(ALLOWED_ORIGIN)];
-        // 阶段 3 管理接口要求二次验证：提供固定二级密码哈希，供测试调用 /api/admin/verify。
-        config.admin_second_password_hash = Some(test_second_hash().await);
         let upload = TempDir::new().expect("创建临时上传目录失败");
         config.upload_dir = upload.path().to_path_buf();
         let state = AppState::new(pool.clone(), redis, config.clone()).expect("构造 AppState 失败");
@@ -379,27 +377,9 @@ async fn insert_admin(env: &TestEnv, username: &str) -> String {
     login(env, username).await
 }
 
-async fn test_second_hash() -> String {
-    PasswordHasher::new(4, 1)
-        .hash("second-pass".to_string())
-        .await
-        .expect("生成二级密码哈希失败")
-}
-
-/// 插入管理员、登录并完成二次验证，返回可用会话 Cookie（阶段 3 管理接口用）。
-async fn verified_admin(env: &TestEnv, username: &str) -> String {
-    let cookie = insert_admin(env, username).await;
-    let response = send(
-        &env.router,
-        Call::json(
-            "/api/admin/verify",
-            serde_json::json!({ "passcode": "second-pass" }),
-        )
-        .cookie(cookie.clone()),
-    )
-    .await;
-    assert_eq!(response.status, StatusCode::OK, "管理员二次验证应成功");
-    cookie
+/// Log in with an ordinary administrator account.
+async fn login_admin(env: &TestEnv, username: &str) -> String {
+    insert_admin(env, username).await
 }
 
 async fn insert_image_proposal(
@@ -1250,7 +1230,7 @@ async fn marker_image_upload_creates_pending_and_localizes() {
     let (owner_cookie, owner_public_id) = register(&env, "img-owner").await;
     let (proposer_cookie, _) = register(&env, "img-proposer").await;
     let (other_cookie, _) = register(&env, "img-other").await;
-    let admin_cookie = verified_admin(&env, "img-admin").await;
+    let admin_cookie = login_admin(&env, "img-admin").await;
 
     let marker = insert_marker(
         &env,
@@ -1514,7 +1494,7 @@ async fn marker_image_upload_validation_and_413_shape() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn admin_marker_image_routes_require_admin_and_second_factor() {
+async fn admin_marker_image_routes_require_current_admin_role() {
     let env = TestEnv::new().await;
     let (user_cookie, _) = register(&env, "img-plain-user").await;
 
@@ -1546,7 +1526,7 @@ async fn admin_marker_image_routes_require_admin_and_second_factor() {
     assert_eq!(user_approve.status, StatusCode::FORBIDDEN);
     assert_eq!(user_approve.json()["status"], 403);
 
-    // 管理员未二次验证：4 条路由都为中文纯文本 403「需要二级密码」。
+    // Admins reach every handler without secondary verification; unknown proposals are 404.
     let unverified = insert_admin(&env, "img-unverified-admin").await;
     for path in [
         "/api/admin/markers/pending-images",
@@ -1564,12 +1544,18 @@ async fn admin_marker_image_routes_require_admin_and_second_factor() {
             Call::new(method, path).cookie(unverified.clone()),
         )
         .await;
-        assert_eq!(response.status, StatusCode::FORBIDDEN, "{path}");
-        assert_eq!(response.text(), "需要二级密码", "{path}");
+        let expected = if path.contains("image-proposals") {
+            StatusCode::NOT_FOUND
+        } else if path.ends_with("cleanup-missing-images") {
+            StatusCode::GONE
+        } else {
+            StatusCode::OK
+        };
+        assert_eq!(response.status, expected, "{path}");
     }
 
-    // 二次验证后：待审清单为普通 JSON 数组。
-    let verified = verified_admin(&env, "img-verified-admin").await;
+    // The pending list remains a plain JSON array.
+    let verified = login_admin(&env, "img-verified-admin").await;
     let list = send(
         &env.router,
         Call::new(Method::GET, "/api/admin/markers/pending-images").cookie(verified),
@@ -1583,7 +1569,7 @@ async fn admin_marker_image_routes_require_admin_and_second_factor() {
 async fn admin_image_proposal_approve_returns_localized_marker_and_reports_errors() {
     let env = TestEnv::new().await;
     let (_owner_cookie, owner_public_id) = register(&env, "approve-owner").await;
-    let admin = verified_admin(&env, "approve-admin").await;
+    let admin = login_admin(&env, "approve-admin").await;
 
     let marker = insert_marker(&env, "待审图", true, "APPROVED", &owner_public_id, None).await;
     let hash = source_hash_components("zh", Some("待审图"), None);
@@ -1707,7 +1693,7 @@ async fn admin_image_proposal_approve_returns_localized_marker_and_reports_error
 async fn rejected_proposal_and_deleted_marker_keep_media_core_permissions() {
     let env = TestEnv::new().await;
     let (proposer_cookie, proposer_public_id) = register(&env, "reject-proposer").await;
-    let admin = verified_admin(&env, "reject-admin").await;
+    let admin = login_admin(&env, "reject-admin").await;
     let owner_public_id = Uuid::new_v4().to_string();
     let marker = insert_marker(&env, "公开拒绝", true, "APPROVED", &owner_public_id, None).await;
     write_marker_file(&env, "reject.png", b"reject");
@@ -1789,8 +1775,8 @@ async fn rejected_proposal_and_deleted_marker_keep_media_core_permissions() {
 async fn concurrent_admin_approval_over_http_only_one_succeeds() {
     let env = TestEnv::new().await;
     let (_owner_cookie, owner_public_id) = register(&env, "race-owner").await;
-    let admin_a = verified_admin(&env, "race-admin-a").await;
-    let admin_b = verified_admin(&env, "race-admin-b").await;
+    let admin_a = login_admin(&env, "race-admin-a").await;
+    let admin_b = login_admin(&env, "race-admin-b").await;
     let marker = insert_marker(&env, "并发审批", true, "APPROVED", &owner_public_id, None).await;
     write_marker_file(&env, "race.png", b"race");
     let proposal = insert_image_proposal(
@@ -1832,9 +1818,9 @@ async fn concurrent_admin_approval_over_http_only_one_succeeds() {
 }
 
 #[tokio::test]
-async fn cleanup_missing_images_over_http_clears_only_missing_references() {
+async fn retired_cleanup_endpoint_preserves_every_reference_and_file() {
     let env = TestEnv::new().await;
-    let admin = verified_admin(&env, "cleanup-admin").await;
+    let admin = login_admin(&env, "cleanup-admin").await;
     let owner_public_id = Uuid::new_v4().to_string();
     write_marker_file(&env, "present.png", b"present");
 
@@ -1872,18 +1858,18 @@ async fn cleanup_missing_images_over_http_clears_only_missing_references() {
         Call::new(Method::POST, "/api/admin/markers/cleanup-missing-images").cookie(admin),
     )
     .await;
-    assert_eq!(response.status, StatusCode::OK);
-    let json = response.json();
-    assert_eq!(json["checked"], 2);
-    assert_eq!(json["cleared"], 1);
-    assert_eq!(json["message"], "失效图片链接清理完成");
+    assert_eq!(response.status, StatusCode::GONE);
+    assert_eq!(response.text(), "批量清理功能已停用");
 
     assert_eq!(
         marker_row_state(&env, present).await.1.as_deref(),
         Some("/uploads/markers/present.png"),
         "存在的普通文件必须保留引用"
     );
-    assert_eq!(marker_row_state(&env, missing).await.1, None);
+    assert_eq!(
+        marker_row_state(&env, missing).await.1.as_deref(),
+        Some("/uploads/markers/missing.png")
+    );
     assert!(
         env.upload_root()
             .join("markers")

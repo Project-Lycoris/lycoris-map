@@ -211,13 +211,6 @@ async fn acl_deluser(admin: &Client, name: &str) {
         .await;
 }
 
-async fn test_second_hash() -> String {
-    PasswordHasher::new(4, 1)
-        .hash("second-pass".to_string())
-        .await
-        .expect("生成二级密码哈希失败")
-}
-
 /// 测试环境：临时库 + Redis + Router + 独立命名空间。
 struct TestEnv {
     _temp: TempDatabase,
@@ -249,7 +242,6 @@ impl TestEnv {
         config.bcrypt_cost = 4;
         config.email_verification_secret = Some("test-email-secret-not-for-production-32".into());
         config.write_allowed_origins = vec![HeaderValue::from_static(ALLOWED_ORIGIN)];
-        config.admin_second_password_hash = Some(test_second_hash().await);
         configure(&mut config);
         let upload = tempfile::TempDir::new().expect("创建临时上传目录失败");
         config.upload_dir = upload.path().to_path_buf();
@@ -481,23 +473,11 @@ async fn insert_user(
     .expect("插入测试用户失败")
 }
 
-/// 登录管理员并通过二次验证，返回会话 Cookie。
-async fn login_verified_admin(env: &TestEnv, username: &str, password: &str) -> String {
+/// Log in with an ordinary administrator account.
+async fn login_admin(env: &TestEnv, username: &str, password: &str) -> String {
     let response = login(env, username, password).await;
-    assert_eq!(response.status, StatusCode::OK, "管理员登录应成功");
-    let token = response.session_cookie().expect("登录应设置 Cookie");
-    let verify = env
-        .send(
-            TestRequest::json(
-                Method::POST,
-                "/api/admin/verify",
-                serde_json::json!({ "passcode": "second-pass" }),
-            )
-            .cookie(token.clone()),
-        )
-        .await;
-    assert_eq!(verify.status, StatusCode::OK, "二次验证应成功");
-    token
+    assert_eq!(response.status, StatusCode::OK);
+    response.session_cookie().expect("admin login cookie")
 }
 
 // ---------------------------------------------------------------------------
@@ -806,7 +786,7 @@ async fn logout_deletes_session_and_old_verify_cannot_revive() {
     let hash = hasher.hash("admin-pass".to_string()).await.unwrap();
     insert_user(&env.pool, "admin", "admin@example.com", &hash, "ADMIN").await;
 
-    let token = login_verified_admin(&env, "admin", "admin-pass").await;
+    let token = login_admin(&env, "admin", "admin-pass").await;
     let logout = env
         .send(TestRequest::new(Method::POST, "/api/logout").cookie(token.clone()))
         .await;
@@ -853,7 +833,7 @@ async fn password_change_keeps_current_and_invalidates_others() {
     let token_b = second.session_cookie().unwrap();
     assert_ne!(token_a, token_b);
 
-    // 先通过二次验证，确认改密会清除它。
+    // Cached clients may still call the role-checked compatibility endpoint.
     let verify = env
         .send(
             TestRequest::json(
@@ -889,12 +869,11 @@ async fn password_change_keeps_current_and_invalidates_others() {
         .await;
     assert_eq!(other.status, StatusCode::UNAUTHORIZED);
 
-    // 改密清除二次验证：管理接口重新要求二级密码。
+    // The current admin session keeps access after changing its password.
     let admin_list = env
         .send(TestRequest::new(Method::GET, "/api/admin/users").cookie(token_a))
         .await;
-    assert_eq!(admin_list.status, StatusCode::FORBIDDEN);
-    assert_eq!(admin_list.text(), "需要二级密码");
+    assert_eq!(admin_list.status, StatusCode::OK);
 
     // 旧密码失效，新密码可登录。
     assert_eq!(
@@ -923,7 +902,7 @@ async fn admin_reset_delete_restore_invalidate_sessions() {
     let user_hash = hasher.hash("user-pass".to_string()).await.unwrap();
     let user_id = insert_user(&env.pool, "bob", "bob@example.com", &user_hash, "USER").await;
 
-    let admin = login_verified_admin(&env, "admin", "admin-pass").await;
+    let admin = login_admin(&env, "admin", "admin-pass").await;
     let user_token = login(&env, "bob", "user-pass")
         .await
         .session_cookie()
@@ -1013,12 +992,12 @@ async fn admin_reset_delete_restore_invalidate_sessions() {
 }
 
 #[tokio::test]
-async fn role_change_drops_admin_and_clears_second_factor() {
+async fn role_change_updates_admin_access_without_relogin() {
     let env = TestEnv::new().await;
     let hasher = PasswordHasher::new(4, 1);
     let hash = hasher.hash("admin-pass".to_string()).await.unwrap();
     let admin_id = insert_user(&env.pool, "admin", "admin@example.com", &hash, "ADMIN").await;
-    let token = login_verified_admin(&env, "admin", "admin-pass").await;
+    let token = login_admin(&env, "admin", "admin-pass").await;
 
     // 数据库角色降级：权限只看当前 DB，且清除二级验证状态。
     sqlx::query("UPDATE users SET role = 'USER' WHERE id = $1")
@@ -1037,144 +1016,55 @@ async fn role_change_drops_admin_and_clears_second_factor() {
         "非管理员 403 应为 Boot 默认 JSON"
     );
 
-    // 重新提升为管理员：二次验证状态已被清除，需重新验证。
+    // Re-promotion uses the current database role without secondary verification.
     sqlx::query("UPDATE users SET role = 'ADMIN' WHERE id = $1")
         .bind(admin_id)
         .execute(&env.pool)
         .await
         .unwrap();
-    let needs_second = env
+    let promoted = env
         .send(TestRequest::new(Method::GET, "/api/admin/users").cookie(token))
         .await;
-    assert_eq!(needs_second.status, StatusCode::FORBIDDEN);
-    assert_eq!(needs_second.text(), "需要二级密码");
+    assert_eq!(promoted.status, StatusCode::OK);
 }
 
 #[tokio::test]
-async fn second_factor_expires_and_can_be_refreshed() {
-    let env = TestEnv::custom(|config| {
-        config.second_factor_ttl = Duration::from_millis(300);
-    })
-    .await;
-    let hasher = PasswordHasher::new(4, 1);
-    let hash = hasher.hash("admin-pass".to_string()).await.unwrap();
-    insert_user(&env.pool, "admin", "admin@example.com", &hash, "ADMIN").await;
-
-    let login = login(&env, "admin", "admin-pass").await;
-    let token = login.session_cookie().unwrap();
-    let verify = env
-        .send(
-            TestRequest::json(
-                Method::POST,
-                "/api/admin/verify",
-                serde_json::json!({ "passcode": "second-pass" }),
-            )
-            .cookie(token.clone()),
-        )
-        .await;
-    assert_eq!(verify.status, StatusCode::OK);
-    let fresh = env
-        .send(TestRequest::new(Method::GET, "/api/admin/users").cookie(token.clone()))
-        .await;
-    assert_eq!(fresh.status, StatusCode::OK);
-
-    tokio::time::sleep(Duration::from_millis(700)).await;
-    let expired = env
-        .send(TestRequest::new(Method::GET, "/api/admin/users").cookie(token.clone()))
-        .await;
-    assert_eq!(expired.status, StatusCode::FORBIDDEN);
-    assert_eq!(expired.text(), "二级密码已过期，请重新验证");
-
-    let reverify = env
-        .send(
-            TestRequest::json(
-                Method::POST,
-                "/api/admin/verify",
-                serde_json::json!({ "passcode": "second-pass" }),
-            )
-            .cookie(token.clone()),
-        )
-        .await;
-    assert_eq!(reverify.status, StatusCode::OK);
-    assert_eq!(
-        env.send(TestRequest::new(Method::GET, "/api/admin/users").cookie(token))
-            .await
-            .status,
-        StatusCode::OK
-    );
-}
-
-#[tokio::test]
-async fn admin_verify_configuration_and_passcode_errors() {
-    // 未配置二级密码哈希。
-    let env = TestEnv::custom(|config| {
-        config.admin_second_password_hash = None;
-    })
-    .await;
-    let hasher = PasswordHasher::new(4, 1);
-    let hash = hasher.hash("admin-pass".to_string()).await.unwrap();
+async fn admin_access_needs_only_login_and_legacy_verify_ignores_passcodes() {
+    let env = TestEnv::new().await;
+    let hash = PasswordHasher::new(4, 1)
+        .hash("admin-pass".into())
+        .await
+        .unwrap();
     insert_user(&env.pool, "admin", "admin@example.com", &hash, "ADMIN").await;
     let token = login(&env, "admin", "admin-pass")
         .await
         .session_cookie()
         .unwrap();
-    let unconfigured = env
-        .send(
-            TestRequest::json(
-                Method::POST,
-                "/api/admin/verify",
-                serde_json::json!({ "passcode": "anything" }),
-            )
-            .cookie(token.clone()),
-        )
-        .await;
-    assert_eq!(unconfigured.status, StatusCode::FORBIDDEN);
-    assert_eq!(unconfigured.text(), "未配置二级密码");
-
-    // 配置存在时：空口令 400、错误口令 403、成功空体。
-    let env = TestEnv::new().await;
-    let hash = hasher.hash("admin-pass".to_string()).await.unwrap();
-    insert_user(&env.pool, "admin2", "admin2@example.com", &hash, "ADMIN").await;
-    let token = login(&env, "admin2", "admin-pass")
-        .await
-        .session_cookie()
-        .unwrap();
-    let empty = env
-        .send(
-            TestRequest::json(
-                Method::POST,
-                "/api/admin/verify",
-                serde_json::json!({ "passcode": "  " }),
-            )
-            .cookie(token.clone()),
-        )
-        .await;
-    assert_eq!(empty.status, StatusCode::BAD_REQUEST);
-    assert_eq!(empty.text(), "缺少二级密码");
-    let wrong = env
-        .send(
-            TestRequest::json(
-                Method::POST,
-                "/api/admin/verify",
-                serde_json::json!({ "passcode": "wrong" }),
-            )
-            .cookie(token.clone()),
-        )
-        .await;
-    assert_eq!(wrong.status, StatusCode::FORBIDDEN);
-    assert_eq!(wrong.text(), "二级密码错误");
-    let ok = env
-        .send(
-            TestRequest::json(
-                Method::POST,
-                "/api/admin/verify",
-                serde_json::json!({ "passcode": "second-pass" }),
-            )
-            .cookie(token),
-        )
-        .await;
-    assert_eq!(ok.status, StatusCode::OK);
-    assert!(ok.body.is_empty(), "二次验证成功体应为空");
+    // No verify call or secondAt field is necessary for either admin queue.
+    for path in [
+        "/api/admin/users",
+        "/api/admin/markers/pending",
+        "/api/admin/markers/pending-edits",
+        "/api/admin/markers/pending-images",
+    ] {
+        assert_eq!(
+            env.send(TestRequest::new(Method::GET, path).cookie(token.clone()))
+                .await
+                .status,
+            StatusCode::OK,
+            "{path}"
+        );
+    }
+    for body in [
+        serde_json::json!({}),
+        serde_json::json!({"passcode": "wrong"}),
+    ] {
+        let response = env
+            .send(TestRequest::json(Method::POST, "/api/admin/verify", body).cookie(token.clone()))
+            .await;
+        assert_eq!(response.status, StatusCode::OK);
+        assert!(response.body.is_empty());
+    }
 }
 
 #[tokio::test]
@@ -1209,7 +1099,7 @@ async fn admin_users_paging_search_and_soft_delete_shape() {
     .await;
     insert_user(&env.pool, "other", "other@example.com", &user_hash, "USER").await;
 
-    let admin = login_verified_admin(&env, "admin", "admin-pass").await;
+    let admin = login_admin(&env, "admin", "admin-pass").await;
     let page = env
         .send(TestRequest::new(Method::GET, "/api/admin/users?page=0&size=2").cookie(admin.clone()))
         .await;
@@ -2089,14 +1979,14 @@ async fn role_missing_admin_403_is_boot_json() {
 }
 
 #[tokio::test]
-async fn second_factor_future_timestamp_is_rejected() {
+async fn legacy_second_factor_timestamp_does_not_gate_admin_access() {
     let env = TestEnv::new().await;
     let hasher = PasswordHasher::new(4, 1);
     let hash = hasher.hash("admin-pass".to_string()).await.unwrap();
     insert_user(&env.pool, "admin", "admin@example.com", &hash, "ADMIN").await;
-    let token = login_verified_admin(&env, "admin", "admin-pass").await;
+    let token = login_admin(&env, "admin", "admin-pass").await;
 
-    // 直接把会话的 secondAt 写成未来时间：elapsed<0 也必须拒绝。
+    // A historical session timestamp no longer grants or blocks admin access.
     let admin_redis = connect_redis().await;
     let store = SessionStore::new(
         admin_redis.clone(),
@@ -2113,8 +2003,7 @@ async fn second_factor_future_timestamp_is_rejected() {
     let response = env
         .send(TestRequest::new(Method::GET, "/api/admin/users").cookie(token))
         .await;
-    assert_eq!(response.status, StatusCode::FORBIDDEN);
-    assert_eq!(response.text(), "二级密码已过期，请重新验证");
+    assert_eq!(response.status, StatusCode::OK);
 }
 
 #[tokio::test]

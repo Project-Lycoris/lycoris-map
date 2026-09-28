@@ -41,11 +41,6 @@ pub struct ChangePasswordRequest {
     pub new_password: Option<String>,
 }
 
-#[derive(Deserialize)]
-pub struct AdminVerifyRequest {
-    pub passcode: Option<String>,
-}
-
 /// AuthController 成功体的用户对象（7 字段）。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

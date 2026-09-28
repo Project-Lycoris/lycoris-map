@@ -14,7 +14,6 @@ import { useAdminWork } from './work'
 import { useAdminUi } from './ui'
 import { MarkerEditor } from './MarkerEditor'
 import { readAccountPlace } from '@/shared/api/privatePlaces'
-type Kind = 'markers' | 'edits' | 'images'
 type Entry =
     | { kind: 'markers'; item: Marker }
     | { kind: 'edits'; item: api.EditProposal }
@@ -22,80 +21,57 @@ type Entry =
 export function Moderation({ all }: { all: boolean }) {
     const work = useAdminWork(),
         ui = useAdminUi(),
-        [kind, setKind] = useState<Kind>('markers'),
         [page, setPage] = useState(0),
         [editing, setEditing] = useState<Marker | null>(null)
     const query = useQuery({
-        queryKey: [...work.prefix, all ? 'all' : kind, ui.language],
+        queryKey: [...work.prefix, all ? 'all' : 'review', ui.language],
         gcTime: 0,
         retry: false,
         queryFn: ({ signal }): Promise<Entry[]> =>
-            work.run(
-                async (s) =>
-                    kind === 'markers'
-                        ? (await api.readMarkers(all, ui.language, s)).map(
-                              (item) => ({ kind: 'markers', item }) as const,
-                          )
-                        : kind === 'edits'
-                          ? (await api.readEdits(s)).map(
-                                (item) => ({ kind: 'edits', item }) as const,
-                            )
-                          : (await api.readImages(s)).map(
-                                (item) => ({ kind: 'images', item }) as const,
-                            ),
-                signal,
-            ),
+            work.run(async (s) => {
+                const markers = await api.readMarkers(all, ui.language, s)
+                if (all) return markers.map((item) => ({ kind: 'markers', item }) as const)
+                const [edits, images] = await Promise.all([api.readEdits(s), api.readImages(s)])
+                return [
+                    ...markers.map((item) => ({ kind: 'markers', item }) as const),
+                    ...edits.map((item) => ({ kind: 'edits', item }) as const),
+                    ...images.map((item) => ({ kind: 'images', item }) as const),
+                ]
+            }, signal),
     })
-    const items = query.data ?? [],
+    // Paginate places rather than submissions, so a place's photos never land
+    // on another page from its content. Oldest pending places are reviewed first.
+    const groups = new Map<number, Entry[]>()
+    const entries = query.data ?? []
+    const ordered = all
+        ? entries
+        : [...entries].sort(
+              (a, b) => a.item.createdAt.localeCompare(b.item.createdAt) || a.item.id - b.item.id,
+          )
+    for (const entry of ordered) {
+        const id = entry.kind === 'markers' ? entry.item.id : entry.item.markerId
+        const group = groups.get(id) ?? []
+        group.push(entry)
+        groups.set(id, group)
+    }
+    const items = [...groups],
         total = Math.max(1, Math.ceil(items.length / 20)),
         current = Math.min(page, total - 1)
     useEffect(() => {
         setPage(0)
         setEditing(null)
         work.clearConfirmation()
-    }, [kind, ui.language])
+    }, [all, ui.language])
     if (editing) return <MarkerEditor marker={editing} close={() => setEditing(null)} />
     return (
         <section className="admin-content">
             <div className="admin-toolbar">
-                {!all && (
-                    <div className="admin-tabs" aria-label={ui.message('Review')}>
-                        {(['markers', 'edits', 'images'] as const).map((value) => (
-                            <DesignButton
-                                key={value}
-                                aria-pressed={kind === value}
-                                disabled={work.busy}
-                                onClick={() => setKind(value)}
-                            >
-                                {ui.message(
-                                    { markers: 'Markers', edits: 'Edits', images: 'Images' }[value],
-                                )}
-                            </DesignButton>
-                        ))}
-                    </div>
-                )}
                 <DesignButton
                     disabled={query.isFetching || work.busy}
                     onClick={() => void query.refetch()}
                 >
                     {ui.message('Refresh')}
                 </DesignButton>
-                {all && (
-                    <DesignButton
-                        disabled={work.busy}
-                        onClick={() =>
-                            work.confirm({
-                                label: ui.message('Clear missing image references'),
-                                detail: ui.message(
-                                    'This clears image addresses only when the server file is missing. It does not delete places or image files.',
-                                ),
-                                action: api.cleanupImages,
-                            })
-                        }
-                    >
-                        {ui.message('Clear missing image references')}
-                    </DesignButton>
-                )}
             </div>
             <p role="status">
                 {ui.message(
@@ -110,13 +86,17 @@ export function Moderation({ all }: { all: boolean }) {
             </p>
             {!query.isError && !query.isPending && (
                 <div className="admin-list">
-                    {items.slice(current * 20, (current + 1) * 20).map((entry) => (
-                        <ReviewCard
-                            key={`${entry.kind}:${entry.item.id}`}
-                            entry={entry}
-                            all={all}
-                            edit={setEditing}
-                        />
+                    {items.slice(current * 20, (current + 1) * 20).map(([id, entries]) => (
+                        <section className="admin-place-group" key={id} aria-label={`#${id}`}>
+                            {entries.map((entry) => (
+                                <ReviewCard
+                                    key={`${entry.kind}:${entry.item.id}`}
+                                    entry={entry}
+                                    all={all}
+                                    edit={setEditing}
+                                />
+                            ))}
+                        </section>
                     ))}
                 </div>
             )}
@@ -173,12 +153,23 @@ function ReviewCard({
               : null
     const decide = (decision: 'approve' | 'reject') =>
         work.confirm({
-            label: `${ui.message(decision === 'approve' ? 'Approve' : 'Reject')} · ${title} #${item.id}`,
+            label: `${ui.message(decision === 'approve' ? 'Approve' : 'Reject')} · ${ui.message({ markers: 'New place', edits: 'Content changes', images: 'Photo submission' }[entry.kind])} · ${title} #${item.id}`,
             detail: entry.kind === 'edits' ? entry.item.title : title,
             action: (signal) => api.moderate(entry.kind, item.id, decision, ui.language, signal),
         })
     return (
         <article className="admin-card">
+            {!all && (
+                <p className="admin-submission-kind">
+                    {ui.message(
+                        {
+                            markers: 'New place',
+                            edits: 'Content changes',
+                            images: 'Photo submission',
+                        }[entry.kind],
+                    )}
+                </p>
+            )}
             <h2>{title}</h2>
             <p className="admin-meta">
                 #{entry.kind === 'markers' ? item.id : entry.item.markerId} ·{' '}

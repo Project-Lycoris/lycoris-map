@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router'
 import { SessionProvider, useSession } from '@/features/auth/SessionProvider'
@@ -37,7 +37,6 @@ beforeEach(() => {
     ])
     vi.spyOn(api, 'readEdits').mockResolvedValue([])
     vi.spyOn(api, 'readImages').mockResolvedValue([])
-    vi.spyOn(api, 'verify').mockResolvedValue(undefined)
     vi.spyOn(api, 'moderate').mockResolvedValue(undefined)
 })
 afterEach(() => {
@@ -94,34 +93,22 @@ it('distinguishes ordinary users and unknown 403s without logging either out', a
     await screen.findByText('Could not confirm access. Try again.')
     expect(screen.getByTestId('identity')).toHaveTextContent('authenticated:A')
 })
-it('verifies an admin without trimming the passcode and only then loads queues', async () => {
-    vi.mocked(api.readUsers).mockRejectedValue(new ApiError(403, '需要二级密码'))
+it('opens the review queue for an authorized login without a second password', async () => {
     mount()
-    await screen.findByRole('heading', { name: 'Secondary verification' })
-    expect(api.readMarkers).not.toHaveBeenCalled()
-    vi.mocked(api.readUsers).mockResolvedValue({
-        page: 0,
-        size: 1,
-        totalPages: 0,
-        totalElements: 0,
-        items: [],
-    })
-    fireEvent.change(screen.getByLabelText('Admin passcode'), {
-        target: { value: ' synthetic passcode ' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Verify' }))
     await screen.findByRole('heading', { name: 'Review synthetic' })
-    expect(api.verify).toHaveBeenCalledWith(' synthetic passcode ', expect.any(AbortSignal))
+    expect(screen.queryByLabelText('Admin passcode')).not.toBeInTheDocument()
 })
-it('clears queues when secondary authorization expires, retaining the ordinary session', async () => {
+it('clears queues when the admin role is revoked, retaining the ordinary session', async () => {
     mount()
     await screen.findByRole('heading', { name: 'Review synthetic' })
-    vi.mocked(api.readMarkers).mockRejectedValue(new ApiError(403, '二级密码已过期，请重新验证'))
+    vi.mocked(api.readMarkers).mockRejectedValue(
+        new ApiError(403, 'Forbidden', { accessDenied: true }),
+    )
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
-    await screen.findByRole('heading', { name: 'Secondary verification' })
+    await screen.findByText('Access denied.')
     expect(screen.queryByText('Review synthetic')).not.toBeInTheDocument()
     expect(screen.getByTestId('identity')).toHaveTextContent('authenticated:A')
-    expect(client.getQueriesData({ predicate: (q) => q.queryKey.includes('markers') })).toEqual([])
+    expect(client.getQueriesData({ predicate: (q) => q.queryKey.includes('review') })).toEqual([])
 })
 it('refreshes after approval and never automatically replays an uncertain write', async () => {
     mount()
@@ -243,4 +230,92 @@ it('does not send a supposedly recoverable deletion to an older backend', async 
     fireEvent.click(waiting)
     expect(disable).not.toHaveBeenCalled()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+})
+
+it('keeps the dashboard usable after approval without rerunning the access gate', async () => {
+    mount()
+    await screen.findByRole('heading', { name: 'Review synthetic' })
+    // Moderation reauthorizes on the server; refreshing its data must not reset
+    // the whole dashboard because an unrelated users-list probe is unavailable.
+    vi.mocked(api.readUsers).mockRejectedValue(new ApiError(503, 'unavailable'))
+    vi.mocked(api.readMarkers).mockResolvedValue([])
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+    await screen.findByText('No items.')
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
+    expect(screen.getByRole('link', { name: 'Users' })).toBeInTheDocument()
+    expect(api.readUsers).toHaveBeenCalledTimes(1)
+    expect(api.moderate).toHaveBeenCalledTimes(1)
+})
+
+it('groups content and images for each place and supports consecutive approvals', async () => {
+    const image: api.ImageProposal = {
+        id: 1,
+        markerId: 1,
+        markerTitle: 'Review synthetic',
+        proposerUsername: 'synthetic',
+        proposerPublicId: null,
+        imageUrl: '/uploads/markers/synthetic.jpg',
+        status: 'PENDING',
+        createdAt: '2026-09-15T01:00:00Z',
+    }
+    vi.mocked(api.readImages).mockResolvedValue([image])
+    vi.mocked(api.moderate).mockImplementation(async (kind) => {
+        if (kind === 'markers') vi.mocked(api.readMarkers).mockResolvedValue([])
+        else vi.mocked(api.readImages).mockResolvedValue([])
+    })
+    const { container } = mount()
+    await screen.findByText('Photo submission')
+    expect(container.querySelectorAll('.admin-place-group')).toHaveLength(1)
+    expect(container.querySelectorAll('.admin-card')).toHaveLength(2)
+    const first = screen.getAllByRole('article')[0]!
+    fireEvent.click(within(first).getByRole('button', { name: 'Approve' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+    await waitFor(() => expect(screen.queryByText('New place')).not.toBeInTheDocument())
+    expect(screen.getByText('Photo submission')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Photo submission')
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+    await screen.findByText('No items.')
+    expect(vi.mocked(api.moderate).mock.calls.map(([kind, id]) => [kind, id])).toEqual([
+        ['markers', 1],
+        ['images', 1],
+    ])
+})
+
+it('keeps navigation and refresh available when the post-approval queue read fails', async () => {
+    mount()
+    await screen.findByRole('heading', { name: 'Review synthetic' })
+    vi.mocked(api.readMarkers).mockRejectedValueOnce(new ApiError(503, 'unavailable'))
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+    await screen.findByText('The request failed. Refresh and try again.')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled())
+    expect(screen.getByRole('link', { name: 'All places' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await screen.findByRole('heading', { name: 'Review synthetic' })
+    expect(api.moderate).toHaveBeenCalledTimes(1)
+})
+
+it('has no bulk image-cleanup action in all places', async () => {
+    mount('/admin/all')
+    await screen.findByRole('heading', { name: 'Review synthetic' })
+    expect(screen.queryByRole('button', { name: /clean|clear missing/i })).not.toBeInTheDocument()
+})
+
+it('releases the mutation lock even if cache refresh itself rejects', async () => {
+    mount()
+    await screen.findByRole('heading', { name: 'Review synthetic' })
+    vi.spyOn(client, 'invalidateQueries').mockRejectedValueOnce(new Error('refresh interrupted'))
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+    await screen.findByText(
+        'Saved, but the list could not refresh. Refresh before reviewing another item.',
+    )
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
+    expect(api.moderate).toHaveBeenCalledTimes(1)
+    vi.mocked(api.readMarkers).mockResolvedValue([])
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await screen.findByText('No items.')
 })

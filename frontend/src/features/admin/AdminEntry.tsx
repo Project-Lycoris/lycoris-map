@@ -7,7 +7,7 @@ export function AdminEntry({ mobile = false }: { mobile?: boolean }) {
     const { access } = useAdminAccess(),
         ui = useAdminUi(),
         flow = useAccountFlow()
-    if (access.data !== 'ready' && access.data !== 'verify') return null
+    if (access.data !== 'ready') return null
     return (
         <Link
             className="setting-card"

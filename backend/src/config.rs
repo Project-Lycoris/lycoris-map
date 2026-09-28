@@ -51,8 +51,6 @@ pub const DEFAULT_SESSION_NAMESPACE: &str = "lycoris:rust:session:v1";
 pub const DEFAULT_RATE_LIMIT_NAMESPACE: &str = "lycoris:rust:ratelimit:v1";
 /// 默认会话有效期 30 天。
 pub const DEFAULT_SESSION_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
-/// 管理员二次验证有效期 30 分钟。
-pub const DEFAULT_SECOND_FACTOR_TTL: Duration = Duration::from_secs(30 * 60);
 /// 注册限流默认 5 次 / 600 秒。
 pub const DEFAULT_REGISTER_RATE_LIMIT_MAX: u32 = 5;
 pub const DEFAULT_REGISTER_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(600);
@@ -63,8 +61,6 @@ pub const DEFAULT_ADMIN_USER_PASSWORD: &str = "Lycoris123!";
 
 /// 会话/ Cookie 时长上限（10 年），避免 TTL 转 i64 时溢出或误配置成天文数字。
 pub const MAX_SESSION_TTL_SECONDS: u64 = 10 * 365 * 24 * 60 * 60;
-/// 二次验证时长上限（1 天）。
-pub const MAX_SECOND_FACTOR_TTL_SECONDS: u64 = 24 * 60 * 60;
 /// 单条 Redis 命令超时上限（10 秒）。
 pub const MAX_REDIS_COMMAND_TIMEOUT_SECONDS: u64 = 10;
 
@@ -122,7 +118,6 @@ pub struct Config {
     pub session_cookie_same_site: SameSitePolicy,
     pub session_cookie_max_age: Duration,
     pub session_ttl: Duration,
-    pub second_factor_ttl: Duration,
     pub session_namespace: String,
     pub rate_limit_namespace: String,
     /// 单条 Redis 命令超时；依赖卡住时受保护操作返回 503，而不是拖到全局请求超时。
@@ -133,8 +128,6 @@ pub struct Config {
     pub register_rate_limit_window: Duration,
     // —— 阶段 2：密码与管理员 ——
     pub bcrypt_cost: u32,
-    pub admin_second_factor_enabled: bool,
-    pub admin_second_password_hash: Option<String>,
     pub admin_default_user_password: String,
 }
 
@@ -180,7 +173,6 @@ impl Config {
             session_cookie_same_site: SameSitePolicy::Lax,
             session_cookie_max_age: DEFAULT_SESSION_TTL,
             session_ttl: DEFAULT_SESSION_TTL,
-            second_factor_ttl: DEFAULT_SECOND_FACTOR_TTL,
             session_namespace: DEFAULT_SESSION_NAMESPACE.to_string(),
             rate_limit_namespace: DEFAULT_RATE_LIMIT_NAMESPACE.to_string(),
             redis_command_timeout: Duration::from_secs(2),
@@ -188,8 +180,6 @@ impl Config {
             register_rate_limit_max: DEFAULT_REGISTER_RATE_LIMIT_MAX,
             register_rate_limit_window: DEFAULT_REGISTER_RATE_LIMIT_WINDOW,
             bcrypt_cost: DEFAULT_BCRYPT_COST,
-            admin_second_factor_enabled: true,
-            admin_second_password_hash: None,
             admin_default_user_password: DEFAULT_ADMIN_USER_PASSWORD.to_string(),
         }
     }
@@ -238,20 +228,6 @@ impl Config {
         let write_allowed_origins = match optional("WRITE_ALLOWED_ORIGINS") {
             Some(raw) => parse_origins(&raw)?,
             None => cors_allowed_origins.clone(),
-        };
-
-        let admin_second_password_hash = optional("ADMIN_SECOND_PASSWORD_HASH").map(|hash| {
-            // 二级密码必须是 BCrypt 编码串；纯文本配置在启动时即拒绝，避免误配置。
-            let hash = hash.trim().to_string();
-            if looks_like_bcrypt(&hash) {
-                Ok(hash)
-            } else {
-                Err(ConfigError::Invalid("ADMIN_SECOND_PASSWORD_HASH"))
-            }
-        });
-        let admin_second_password_hash = match admin_second_password_hash {
-            Some(result) => Some(result?),
-            None => None,
         };
 
         Ok(Self {
@@ -307,11 +283,6 @@ impl Config {
                 30 * 24 * 60 * 60,
                 MAX_SESSION_TTL_SECONDS,
             )?,
-            second_factor_ttl: bounded_seconds(
-                "SECOND_FACTOR_TTL_SECONDS",
-                30 * 60,
-                MAX_SECOND_FACTOR_TTL_SECONDS,
-            )?,
             session_namespace: non_empty(
                 "SESSION_NAMESPACE",
                 optional("SESSION_NAMESPACE").unwrap_or_else(|| DEFAULT_SESSION_NAMESPACE.into()),
@@ -334,8 +305,6 @@ impl Config {
             register_rate_limit_window: seconds("REGISTER_RATE_LIMIT_WINDOW_SECONDS", 600)?,
             password_max_concurrency: parse_password_max_concurrency("PASSWORD_MAX_CONCURRENCY")?,
             bcrypt_cost: non_zero("BCRYPT_COST", parse_or("BCRYPT_COST", DEFAULT_BCRYPT_COST)?)?,
-            admin_second_factor_enabled: parse_bool("ADMIN_SECOND_FACTOR_ENABLED", true)?,
-            admin_second_password_hash,
             admin_default_user_password: optional("ADMIN_DEFAULT_USER_PASSWORD")
                 .unwrap_or_else(|| DEFAULT_ADMIN_USER_PASSWORD.to_string()),
         })
@@ -549,11 +518,6 @@ fn parse_origins(raw: &str) -> Result<Vec<HeaderValue>, ConfigError> {
         origins.push(HeaderValue::from_str(&normalized).map_err(|_| ConfigError::Invalid(key))?);
     }
     Ok(origins)
-}
-
-/// 是否是 Java 侧认可的 BCrypt 编码前缀（`$2a$`/`$2b$`/`$2y$`）。
-fn looks_like_bcrypt(value: &str) -> bool {
-    value.starts_with("$2a$") || value.starts_with("$2b$") || value.starts_with("$2y$")
 }
 
 fn parse_bool(key: &'static str, default: bool) -> Result<bool, ConfigError> {

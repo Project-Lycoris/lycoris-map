@@ -25,7 +25,6 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 const ALLOWED_ORIGIN: &str = "https://app.example.com";
-const SECOND_PASSCODE: &str = "second-pass";
 
 /// 兼容原有点位字段，并增加独立的软删除标志 `deactivated`。
 const MARKER_KEYS: [&str; 26] = [
@@ -102,7 +101,6 @@ impl Env {
         config.marker_cache_namespace = format!("lycoris:test:{unique}:marker");
         config.bcrypt_cost = 4;
         config.write_allowed_origins = vec![HeaderValue::from_static(ALLOWED_ORIGIN)];
-        config.admin_second_password_hash = Some(second_hash().await);
         config.upload_dir = upload.path().to_path_buf();
         let state = AppState::new(pool.clone(), redis, config).expect("构造 AppState 失败");
         let router = build_router(state.clone());
@@ -114,13 +112,6 @@ impl Env {
             router,
         }
     }
-}
-
-async fn second_hash() -> String {
-    PasswordHasher::new(4, 1)
-        .hash(SECOND_PASSCODE.to_string())
-        .await
-        .expect("生成二级密码哈希失败")
 }
 
 /// 直接插入带已知密码的账号，口令约定为 `{username}-pass`；返回 `public_id`。
@@ -295,23 +286,9 @@ async fn login(env: &Env, username: &str) -> String {
     response.cookie().expect("登录应设置会话 Cookie")
 }
 
-/// 登录管理员并通过真实 `/api/admin/verify`。
-async fn verified_admin(env: &Env, username: &str) -> String {
-    let token = login(env, username).await;
-    let response = post(
-        env,
-        "/api/admin/verify",
-        json!({ "passcode": SECOND_PASSCODE }),
-        Some(token.as_str()),
-    )
-    .await;
-    assert_eq!(
-        response.status,
-        StatusCode::OK,
-        "二次验证 {username} 失败: {}",
-        response.text()
-    );
-    token
+/// Log in with an ordinary administrator account.
+async fn login_admin(env: &Env, username: &str) -> String {
+    login(env, username).await
 }
 
 fn create_body(title: &str, language: &str) -> Value {
@@ -463,15 +440,14 @@ async fn anonymous_and_ordinary_are_blocked_with_contract_shapes() {
     let all_as_other = get(&env, "/api/markers/all", Some(other_token.as_str())).await;
     assert_boot_forbidden(&all_as_other, "/api/markers/all");
 
-    // 管理员未二次验证：管理员路由 403 纯文本；/api/markers/all 不要求二次验证。
+    // Logged-in admins can read both routes without secondary verification.
     let pending_unverified = get(
         &env,
         "/api/admin/markers/pending",
         Some(admin_token.as_str()),
     )
     .await;
-    assert_eq!(pending_unverified.status, StatusCode::FORBIDDEN);
-    assert_eq!(pending_unverified.text(), "需要二级密码");
+    assert_eq!(pending_unverified.status, StatusCode::OK);
     let all_unverified = get(&env, "/api/markers/all", Some(admin_token.as_str())).await;
     assert_eq!(all_unverified.status, StatusCode::OK);
 
@@ -573,18 +549,8 @@ async fn create_review_favorite_list_and_admin_reads_lifecycle() {
     .await;
     assert_eq!(favorite_private.status, StatusCode::NOT_FOUND);
 
-    // 管理员未二次验证不能审核。
-    let unverified = post_empty(
-        &env,
-        &format!("/api/admin/markers/{id}/approve"),
-        Some(admin_token.as_str()),
-    )
-    .await;
-    assert_eq!(unverified.status, StatusCode::FORBIDDEN);
-    assert_eq!(unverified.text(), "需要二级密码");
-
-    // 二次验证后审核通过，版本推进。
-    let admin = verified_admin(&env, "admin").await;
+    // A normal admin login can approve directly, advancing the version once.
+    let admin = admin_token.clone();
     let approved = post_empty(
         &env,
         &format!("/api/admin/markers/{id}/approve"),
@@ -689,7 +655,7 @@ async fn owner_and_admin_delete_semantics() {
     let _ = insert_user(&env, "admin", "ADMIN").await;
     let owner_token = login(&env, "owner").await;
     let other_token = login(&env, "other").await;
-    let admin = verified_admin(&env, "admin").await;
+    let admin = login_admin(&env, "admin").await;
 
     let created = post(
         &env,
@@ -816,7 +782,7 @@ async fn ordinary_patch_creates_pending_proposal_and_admin_review() {
     let _ = insert_user(&env, "admin", "ADMIN").await;
     let owner_token = login(&env, "owner").await;
     let other_token = login(&env, "other").await;
-    let admin = verified_admin(&env, "admin").await;
+    let admin = login_admin(&env, "admin").await;
 
     let created = post(
         &env,
@@ -954,7 +920,7 @@ async fn admin_pending_all_reject_and_translation_invalidation() {
     let _ = insert_user(&env, "owner", "USER").await;
     let _ = insert_user(&env, "admin", "ADMIN").await;
     let owner_token = login(&env, "owner").await;
-    let admin = verified_admin(&env, "admin").await;
+    let admin = login_admin(&env, "admin").await;
 
     // 一条待审、一条已审核。
     let pending_id = id_of(
@@ -1080,8 +1046,8 @@ async fn concurrent_edit_proposal_review_allows_one_and_conflicts_other() {
     let _ = insert_user(&env, "admin1", "ADMIN").await;
     let _ = insert_user(&env, "admin2", "ADMIN").await;
     let owner_token = login(&env, "owner").await;
-    let admin1 = verified_admin(&env, "admin1").await;
-    let admin2 = verified_admin(&env, "admin2").await;
+    let admin1 = login_admin(&env, "admin1").await;
+    let admin2 = login_admin(&env, "admin2").await;
 
     let created = post(
         &env,
@@ -1303,7 +1269,7 @@ async fn marker_write_json_body_uses_global_limit_with_contract_errors() {
     let _ = insert_user(&env, "owner", "USER").await;
     let _ = insert_user(&env, "admin", "ADMIN").await;
     let owner_token = login(&env, "owner").await;
-    let admin = verified_admin(&env, "admin").await;
+    let admin = login_admin(&env, "admin").await;
 
     // 超过认证 64 KiB、但小于全局 8 MiB 的合法 description：点位创建必须成功。
     let big = "d".repeat(70 * 1024);

@@ -176,7 +176,7 @@ pub fn build_router(state: AppState) -> Router {
             "/api/admin/users/{id}/restore",
             axum::routing::post(routes::admin::restore_user),
         )
-        // Image moderation and missing-reference cleanup require VerifiedAdmin.
+        // Image moderation and the retired cleanup endpoint require AdminUser.
         .route(
             "/api/admin/markers/pending-images",
             get(routes::admin_markers::pending_images),
