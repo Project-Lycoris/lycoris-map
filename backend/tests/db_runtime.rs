@@ -27,7 +27,6 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 const ALLOWED_ORIGIN: &str = "https://app.example.com";
-const SECOND_PASSCODE: &str = "second-pass";
 
 fn serve_config(temp: &TempDatabase, statement_ms: u64, lock_ms: u64) -> Config {
     let mut config = Config::new(temp.url(), test_redis_url());
@@ -265,7 +264,6 @@ async fn http_env() -> HttpEnv {
     config.bcrypt_cost = 4;
     config.write_allowed_origins = vec![HeaderValue::from_static(ALLOWED_ORIGIN)];
     config.cors_allowed_origins = vec![HeaderValue::from_static(ALLOWED_ORIGIN)];
-    config.admin_second_password_hash = Some(second_hash().await);
     config.db_statement_timeout = Duration::from_millis(2000);
     config.db_lock_timeout = Duration::from_millis(150);
     let upload = tempfile::TempDir::new().expect("创建临时上传目录失败");
@@ -291,13 +289,6 @@ async fn http_env() -> HttpEnv {
         pool,
         router,
     }
-}
-
-async fn second_hash() -> String {
-    PasswordHasher::new(4, 1)
-        .hash(SECOND_PASSCODE.to_string())
-        .await
-        .expect("生成二级密码哈希失败")
 }
 
 async fn insert_admin(pool: &PgPool, username: &str) -> Uuid {
@@ -427,19 +418,8 @@ async fn login(env: &HttpEnv, username: &str) -> String {
     response.cookie()
 }
 
-async fn verified_admin(env: &HttpEnv, username: &str) -> String {
-    let token = login(env, username).await;
-    let response = send(
-        env,
-        Method::POST,
-        "/api/admin/verify",
-        Some(json!({ "passcode": SECOND_PASSCODE })),
-        Some(&token),
-        &[],
-    )
-    .await;
-    assert_eq!(response.status, StatusCode::OK, "{}", response.text());
-    token
+async fn login_admin(env: &HttpEnv, username: &str) -> String {
+    login(env, username).await
 }
 
 #[tokio::test]
@@ -447,7 +427,7 @@ async fn held_lock_write_returns_503_with_cors_and_request_id_then_succeeds() {
     let env = http_env().await;
     let public_id = insert_admin(&env.pool, "admin").await;
     let marker = seed_marker(&env.pool, &public_id.to_string()).await;
-    let token = verified_admin(&env, "admin").await;
+    let token = login_admin(&env, "admin").await;
 
     // 另一连接持有该点位行锁。
     let mut blocker = env.pool.acquire().await.expect("取阻塞连接失败");

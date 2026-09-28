@@ -9,18 +9,12 @@ chmod 0644 "$deployment_dir/Caddyfile"
 chmod 0755 "$deployment_dir/init-database.sh"
 root=/opt/lycoris
 private="$root/private"
-admin_hash=
 reset_password=
 while IFS= read -r line; do
     case "$line" in
-        ADMIN_SECOND_PASSWORD_HASH=*) admin_hash="${line#*=}" ;;
         ADMIN_DEFAULT_USER_PASSWORD=*) reset_password="${line#*=}" ;;
     esac
 done < "${1:?Pass the private admin.env exported from the previous service}"
-case "$admin_hash" in
-    '$2a$'*|'$2b$'*|'$2y$'*) ;;
-    *) echo 'An existing admin BCrypt hash is required.' >&2; exit 1 ;;
-esac
 for name in postgres-password app-db-password app.env; do
     if test -e "$private/$name"; then
         echo 'Production configuration exists; refusing to replace it.' >&2
@@ -45,8 +39,7 @@ chmod 0444 "$private/postgres-password" "$private/app-db-password"
     printf '%s\n' 'SESSION_NAMESPACE=lycoris:rust:session:production:v1'
     printf '%s\n' 'RATE_LIMIT_NAMESPACE=lycoris:rust:ratelimit:production:v1'
     printf '%s\n' 'MARKER_CACHE_NAMESPACE=lycoris:rust:marker:production:v1'
-    printf '%s\n' 'APP_AVAILABILITY_ZONE=Asia/Shanghai' 'ADMIN_SECOND_FACTOR_ENABLED=true'
-    printf '%s\n' "ADMIN_SECOND_PASSWORD_HASH=$admin_hash"
+    printf '%s\n' 'APP_AVAILABILITY_ZONE=Asia/Shanghai'
     printf '%s\n' "ADMIN_DEFAULT_USER_PASSWORD=$reset_password" 'RUST_LOG=info'
 } > "$private/app.env"
 chmod 0600 "$private/app.env"

@@ -28,6 +28,14 @@ The API listens on `127.0.0.1:8080` by default. `/health/live` checks the proces
 
 Registration and password recovery require SMTP plus an independent `EMAIL_VERIFICATION_SECRET`. Without mail configuration, the API rejects code requests rather than allowing unverified registration. See [email verification](deploy/production/EMAIL_VERIFICATION.md).
 
+## Administration
+
+Admin endpoints authorize the current database role `ADMIN` on every request. Account login is the only credential required. The retired `ADMIN_SECOND_FACTOR_ENABLED`, `ADMIN_SECOND_PASSWORD_HASH`, and `SECOND_FACTOR_TTL_SECONDS` settings are ignored; existing environment files and sessions need no migration. `/api/admin/verify` remains a role-checked compatibility endpoint for cached clients.
+
+The former `/api/admin/markers/cleanup-missing-images` action returns 410 without modifying any records or files, including when called by a cached client.
+
+Deploy this backend before the matching Web update so cached clients and the new role-only entry both work during rollout.
+
 ## Database changes
 
 Normal startup verifies migration history without changing the schema. Apply pending migrations explicitly with `cargo run --locked -- --migrate`. Never edit a migration already applied to any shared database; add another migration instead.

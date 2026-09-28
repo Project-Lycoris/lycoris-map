@@ -1,4 +1,4 @@
-//! 身份提取器：`OptionalUser`、`CurrentUser`、`AdminUser`、`VerifiedAdmin`。
+//! 身份提取器：`OptionalUser`、`CurrentUser`、`AdminUser`。
 //!
 //! 每个需要身份的请求都从 Cookie 解析标识、从 Redis 读取类型化会话、并**从 PG 重新加载**
 //! 当前账号，检查 `deleted`、`sessionVersion` 与角色。权限只看当前数据库：
@@ -15,8 +15,8 @@
 use std::time::Duration;
 
 use axum::extract::FromRequestParts;
+use axum::http::HeaderMap;
 use axum::http::request::Parts;
-use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 
 use crate::app::AppState;
@@ -38,8 +38,6 @@ pub struct Identity {
     pub token: String,
     /// 观测到的会话身份（版本已与 DB 对齐，角色已同步）。
     pub session: NewSession,
-    /// 二次验证时间（epoch 毫秒）；`None` 表示未验证。
-    pub second_at: Option<i64>,
 }
 
 impl std::fmt::Debug for Identity {
@@ -47,7 +45,6 @@ impl std::fmt::Debug for Identity {
         f.debug_struct("Identity")
             .field("user", &self.user)
             .field("session", &self.session)
-            .field("second_at", &self.second_at)
             .field("token", &"<redacted>")
             .finish()
     }
@@ -62,8 +59,7 @@ impl Identity {
 /// 提取失败时的响应。形状按 Java 契约分别选择。
 ///
 /// 注意：`Forbidden` 是“已认证但角色不足”，真实 Java 走 Spring Boot 默认错误分派，
-/// 返回 `{timestamp,status,error,path}` JSON（不是空体，也不是文本）；二级验证失败的
-/// `SecondRequired`/`SecondExpired` 仍是中文纯文本，`Unauthorized` 仍是安全入口固定 JSON。
+/// Forbidden returns `{timestamp,status,error,path}`; unauthorized uses the security envelope.
 #[derive(Debug, Clone)]
 pub enum AuthRejection {
     /// 未认证：安全入口固定 401 JSON。
@@ -72,10 +68,6 @@ pub enum AuthRejection {
     Forbidden(String),
     /// 依赖故障：503。
     Unavailable,
-    /// 管理员需要二级密码。
-    SecondRequired,
-    /// 二级密码已过期（并已清除状态）。
-    SecondExpired,
 }
 
 impl IntoResponse for AuthRejection {
@@ -84,10 +76,6 @@ impl IntoResponse for AuthRejection {
             AuthRejection::Unauthorized => web::security_entry(),
             AuthRejection::Forbidden(path) => web::forbidden(&path),
             AuthRejection::Unavailable => web::unavailable(),
-            AuthRejection::SecondRequired => web::text(StatusCode::FORBIDDEN, "需要二级密码"),
-            AuthRejection::SecondExpired => {
-                web::text(StatusCode::FORBIDDEN, "二级密码已过期，请重新验证")
-            }
         }
     }
 }
@@ -236,7 +224,6 @@ async fn load_identity(
             user,
             token,
             session: snapshot_of(&record),
-            second_at: record.second_at,
         }));
     }
 }
@@ -286,56 +273,6 @@ impl FromRequestParts<AppState> for AdminUser {
             Some(identity) if identity.is_admin() => Ok(AdminUser(identity)),
             Some(_) => Err(AuthRejection::Forbidden(parts.uri.path().to_string())),
             None => Err(AuthRejection::Unauthorized),
-        }
-    }
-}
-
-/// 管理员且在配置启用时通过二次验证（默认 30 分钟）。
-pub struct VerifiedAdmin(pub Identity);
-
-impl FromRequestParts<AppState> for VerifiedAdmin {
-    type Rejection = AuthRejection;
-
-    async fn from_request_parts(
-        parts: &mut Parts,
-        state: &AppState,
-    ) -> Result<Self, Self::Rejection> {
-        let identity = match load_identity(state, &parts.headers).await? {
-            Some(identity) if identity.is_admin() => identity,
-            Some(_) => {
-                return Err(AuthRejection::Forbidden(parts.uri.path().to_string()));
-            }
-            None => return Err(AuthRejection::Unauthorized),
-        };
-
-        if !state.config.admin_second_factor_enabled {
-            return Ok(VerifiedAdmin(identity));
-        }
-
-        match identity.second_at {
-            None => Err(AuthRejection::SecondRequired),
-            Some(at) => {
-                // 配置 TTL 已有界；再对损坏 Redis 里的 i64 极值做 checked/saturating，
-                // 避免 debug 下 now-at 溢出 panic 或 release 下回绕绕过。
-                let ttl_ms =
-                    i64::try_from(state.config.second_factor_ttl.as_millis()).unwrap_or(i64::MAX);
-                let now = chrono::Utc::now().timestamp_millis();
-                let elapsed = now.checked_sub(at);
-                let invalid = match elapsed {
-                    Some(elapsed) => elapsed < 0 || elapsed > ttl_ms,
-                    None => true,
-                };
-                // 未来时间（elapsed<0 或溢出）与超时都拒绝；clearing 失败按拒绝处理（方向安全）。
-                if invalid {
-                    let _ = state
-                        .session
-                        .clear_second_verified(&identity.token, &identity.session)
-                        .await;
-                    Err(AuthRejection::SecondExpired)
-                } else {
-                    Ok(VerifiedAdmin(identity))
-                }
-            }
         }
     }
 }

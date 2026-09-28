@@ -1,14 +1,13 @@
 //! 阶段 3 点位写入/收藏/审核 HTTP 层：薄 handler、认证提取器与响应本地化。
 //!
-//! 本模块不含业务事务与 SQL：身份由 [`CurrentUser`]/[`AdminUser`]/[`VerifiedAdmin`] 提取后，
+//! 本模块不含业务事务与 SQL：身份由 [`CurrentUser`]/[`AdminUser`] 提取后，
 //! 只从 `Identity.user` 当前数据库行构造 [`Actor`]（绝不从请求体填 owner/admin），再调用
 //! 已验收的 [`MarkerWriteService`]。成功 `MarkerRow`/`Vec<MarkerRow>` 一律经
 //! [`MarkerService::localize`] 生成与读取接口同形的 26 字段响应并带语言 `Vary`，
 //! 不直接序列化数据库行。
 //!
-//! 权限：用户写与本人读取用 `CurrentUser`；`GET /api/markers/all` 用 `AdminUser`
-//! （不要求二次验证）；其余 `/api/admin/markers/**` 用 `VerifiedAdmin`。认证入口与缺角色
-//! 的形状由提取器负责（401 安全入口 JSON、缺角色 Boot 403 JSON、二级密码 403 纯文本）。
+//! User endpoints require `CurrentUser`; every admin endpoint requires the
+//! current database role ADMIN through `AdminUser`. No secondary password.
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -18,7 +17,7 @@ use axum::{Json, Router};
 use serde::Deserialize;
 
 use crate::app::AppState;
-use crate::auth::{AdminUser, CurrentUser, Identity, VerifiedAdmin};
+use crate::auth::{AdminUser, CurrentUser, Identity};
 use crate::error::{ApiError, ErrorShape};
 use crate::modules::markers::http::{json_marker, json_markers};
 use crate::modules::markers::localization;
@@ -49,7 +48,7 @@ pub fn router() -> Router<AppState> {
         )
         // 管理员诊断读：只要求当前数据库角色为 ADMIN，不要求二次验证。
         .route("/api/markers/all", get(list_all))
-        // 管理员 + 二次验证。
+        // Current database role ADMIN.
         .route("/api/admin/markers/pending", get(admin_pending))
         .route("/api/admin/markers/pending-edits", get(admin_pending_edits))
         .route("/api/admin/markers/all", get(admin_all))
@@ -281,7 +280,7 @@ async fn list_all(
 /// GET /api/admin/markers/pending
 async fn admin_pending(
     State(state): State<AppState>,
-    admin: VerifiedAdmin,
+    admin: AdminUser,
     headers: HeaderMap,
     Query(query): Query<LangQuery>,
 ) -> Response {
@@ -299,7 +298,7 @@ async fn admin_pending(
 }
 
 /// GET /api/admin/markers/pending-edits：普通 JSON，19 字段提案 DTO。
-async fn admin_pending_edits(State(state): State<AppState>, admin: VerifiedAdmin) -> Response {
+async fn admin_pending_edits(State(state): State<AppState>, admin: AdminUser) -> Response {
     match state
         .markers_write
         .pending_edit_proposals(&actor_of(&admin.0))
@@ -316,7 +315,7 @@ async fn admin_pending_edits(State(state): State<AppState>, admin: VerifiedAdmin
 /// GET /api/admin/markers/all
 async fn admin_all(
     State(state): State<AppState>,
-    admin: VerifiedAdmin,
+    admin: AdminUser,
     headers: HeaderMap,
     Query(query): Query<LangQuery>,
 ) -> Response {
@@ -336,7 +335,7 @@ async fn admin_all(
 /// POST /api/admin/markers/{id}/approve
 async fn admin_approve(
     State(state): State<AppState>,
-    admin: VerifiedAdmin,
+    admin: AdminUser,
     Path(id): Path<i64>,
     headers: HeaderMap,
     Query(query): Query<LangQuery>,
@@ -357,7 +356,7 @@ async fn admin_approve(
 /// POST /api/admin/markers/{id}/reject
 async fn admin_reject(
     State(state): State<AppState>,
-    admin: VerifiedAdmin,
+    admin: AdminUser,
     Path(id): Path<i64>,
     headers: HeaderMap,
     Query(query): Query<LangQuery>,
@@ -378,7 +377,7 @@ async fn admin_reject(
 /// PATCH /api/admin/markers/{id}：管理员直接编辑，不生成提案。
 async fn admin_update(
     State(state): State<AppState>,
-    admin: VerifiedAdmin,
+    admin: AdminUser,
     Path(id): Path<i64>,
     headers: HeaderMap,
     Query(query): Query<LangQuery>,
@@ -402,7 +401,7 @@ async fn admin_update(
 /// DELETE /api/admin/markers/{id}
 async fn admin_delete(
     State(state): State<AppState>,
-    admin: VerifiedAdmin,
+    admin: AdminUser,
     Path(id): Path<i64>,
 ) -> Response {
     match state
@@ -418,7 +417,7 @@ async fn admin_delete(
 /// POST /api/admin/markers/{id}/restore: restore without approving or changing visibility.
 async fn admin_restore(
     State(state): State<AppState>,
-    admin: VerifiedAdmin,
+    admin: AdminUser,
     Path(id): Path<i64>,
 ) -> Response {
     match state
@@ -434,7 +433,7 @@ async fn admin_restore(
 /// POST /api/admin/markers/edit-proposals/{id}/approve
 async fn admin_approve_proposal(
     State(state): State<AppState>,
-    admin: VerifiedAdmin,
+    admin: AdminUser,
     Path(id): Path<i64>,
     headers: HeaderMap,
     Query(query): Query<LangQuery>,
@@ -455,7 +454,7 @@ async fn admin_approve_proposal(
 /// POST /api/admin/markers/edit-proposals/{id}/reject
 async fn admin_reject_proposal(
     State(state): State<AppState>,
-    admin: VerifiedAdmin,
+    admin: AdminUser,
     Path(id): Path<i64>,
 ) -> Response {
     match state
