@@ -1,6 +1,8 @@
 # Cloudflare Pages deployment
 
-The `lycoris-main` Pages project builds `frontend/` from `main` and serves `https://lycoris-map.com`. Other branches produce preview deployments. Output is `dist/`; the worker files are copied into that output by the build command.
+The `lycoris-map` Pages project builds `frontend/` from `Project-Lycoris/lycoris-map` on `main` and serves `https://lycoris-map.com`. Other branches produce preview deployments. Output is `dist/`; the worker files are copied into that output by the build command.
+
+The previous `lycoris-main` project retains its deployment history and the retired `lycoris.online` domain bindings. Those domains redirect to the current site; they are not the production build target.
 
 ## Build configuration
 
@@ -29,7 +31,7 @@ Language defaults and failure recovery live in the frontend map-source module. A
 
 ## Images and R2
 
-Bind `MEDIA_BUCKET` to a private R2 bucket, with separate Production and Preview buckets. Keep public bucket access disabled. The binding supplies Worker access; no S3 credentials belong in the browser or Rust image.
+Bind `MEDIA_BUCKET` to `lycoris-media-prod` in Production and `lycoris-media-preview` in Preview. Keep both R2 buckets private with public access disabled. The binding supplies Worker access; no S3 credentials belong in the browser or Rust image. Redeploy after changing bindings so the running Worker receives the updated configuration.
 
 For every media request, the Worker first makes an uncached authorization HEAD request to Rust using the current viewer's credentials. It then uses the authorized content hash to read the edge cache or R2. Authorization failure or origin unavailability must never fall back to cached bytes.
 
