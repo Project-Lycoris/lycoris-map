@@ -130,6 +130,7 @@ pub struct EditProposalRow {
     pub proposer_is_owner: bool,
     pub status: String,
     pub base_marker_version: Option<i64>,
+    pub base_content: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
 }
 

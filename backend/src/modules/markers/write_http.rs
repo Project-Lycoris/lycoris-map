@@ -101,13 +101,7 @@ fn empty_ok() -> Response {
 
 /// 把单行本地化为 26 字段响应（带语言 `Vary`）。
 async fn localize_one(state: &AppState, row: MarkerRow, lang: &'static str) -> Response {
-    match state.markers.localize(vec![row], lang).await {
-        Ok(dtos) => match dtos.into_iter().next() {
-            Some(marker) => json_marker(&marker),
-            None => api_text(ApiError::Internal),
-        },
-        Err(error) => api_text(error),
-    }
+    json_marker(&state.markers.committed_row(row, lang).await)
 }
 
 /// 把多行本地化为 26 字段响应数组（带语言 `Vary`）。

@@ -2,7 +2,7 @@
 //!
 //! 通过真实 Router + 实际 `/api/login` 会话 Cookie 验证 18 条非图片路由：
 //! 用户写与本人读取、`/api/markers/all`（管理员不二次）、`/api/admin/markers/**`
-//! （管理员 + 二次验证）的匿名/普通/管理员矩阵，完整创建→审核→收藏→提案→审核→本地化
+//! （当前数据库管理员角色）的匿名/普通/管理员矩阵，完整创建→审核→收藏→提案→审核→本地化
 //! 生命周期，两条同基准提案的 HTTP 并发审核竞争，以及新建点位 `markImage` 收紧。
 //! 每个用例使用 UUID 临时库与独立 Redis 命名空间，只清理自己的库。
 
@@ -1361,4 +1361,91 @@ async fn marker_write_json_body_uses_global_limit_with_contract_errors() {
         }),
         "超限应为统一 ApiResponse 上传上限文案"
     );
+}
+
+#[tokio::test]
+async fn english_clients_submit_chinese_and_translation_read_failure_cannot_undo_approval() {
+    let env = Env::new().await;
+    insert_user(&env, "owner", "USER").await;
+    insert_user(&env, "admin", "ADMIN").await;
+    let owner = login(&env, "owner").await;
+    let admin = login_admin(&env, "admin").await;
+    let mut ids = Vec::new();
+    for title in ["中文投稿一", "中文投稿二"] {
+        let created = post(
+            &env,
+            "/api/markers?lang=en",
+            create_body(title, "en"),
+            Some(&owner),
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::OK, "{}", created.text());
+        assert_eq!(created.json()["sourceLanguage"], "zh");
+        ids.push(id_of(&created.json()));
+    }
+    // A missing optional translation table represents a failed post-commit read.
+    sqlx::query(
+        "ALTER TABLE map_marker_translations RENAME TO translations_temporarily_unavailable",
+    )
+    .execute(&env.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        get(&env, "/api/admin/markers/pending?lang=en", Some(&admin))
+            .await
+            .status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "The optional translation read must actually fail in this fixture"
+    );
+    for id in &ids {
+        let approved = post_empty(
+            &env,
+            &format!("/api/admin/markers/{id}/approve?lang=en"),
+            Some(&admin),
+        )
+        .await;
+        assert_eq!(approved.status, StatusCode::OK, "{}", approved.text());
+        assert_eq!(approved.json()["reviewStatus"], "APPROVED");
+        assert_eq!(approved.json()["sourceLanguage"], "zh");
+    }
+    let edited = patch(
+        &env,
+        &format!("/api/markers/{}?lang=en", ids[0]),
+        json!({"title":"中文修订", "language":"en"}),
+        Some(&owner),
+    )
+    .await;
+    assert_eq!(edited.status, StatusCode::OK, "{}", edited.text());
+    let proposals = get(
+        &env,
+        "/api/admin/markers/pending-edits?lang=en",
+        Some(&admin),
+    )
+    .await;
+    assert_eq!(proposals.json()[0]["language"], "zh");
+    let proposal = id_of(&proposals.json()[0]);
+    let approved = post_empty(
+        &env,
+        &format!("/api/admin/markers/edit-proposals/{proposal}/approve?lang=en"),
+        Some(&admin),
+    )
+    .await;
+    assert_eq!(approved.status, StatusCode::OK, "{}", approved.text());
+    assert_eq!(approved.json()["title"], "中文修订");
+    assert_eq!(approved.json()["sourceLanguage"], "zh");
+    sqlx::query(
+        "ALTER TABLE translations_temporarily_unavailable RENAME TO map_marker_translations",
+    )
+    .execute(&env.pool)
+    .await
+    .unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM map_marker_translations")
+        .fetch_one(&env.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 0,
+        "Public submissions must not generate English translations"
+    );
+    env.pool.close().await;
 }

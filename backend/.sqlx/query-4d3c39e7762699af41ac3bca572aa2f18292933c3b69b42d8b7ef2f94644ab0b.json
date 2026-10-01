@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO marker_edit_proposals (\n    marker_id, marker_title, marker_lat, marker_lng, proposer_username, proposer_public_id,\n    proposer_is_owner, category, title, description, language, is_public, is_active,\n    open_time_start, open_time_end, venue_type, base_marker_version, base_content, status, created_at)\nVALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'PENDING', now())\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Varchar",
+        "Float8",
+        "Float8",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Bool",
+        "Bool",
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Int8",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4d3c39e7762699af41ac3bca572aa2f18292933c3b69b42d8b7ef2f94644ab0b"
+}

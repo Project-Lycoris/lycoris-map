@@ -731,72 +731,57 @@ async fn user_patch_creates_pending_proposal_only() {
 }
 
 #[tokio::test]
-async fn proposal_translation_language_requires_both_fields_when_no_valid_translation() {
+async fn public_edit_uses_chinese_source_regardless_of_request_language() {
     let (_temp, pool) = TempDatabase::create_migrated().await;
-    let redis = connect_redis().await;
-    let write = write_service(pool.clone(), redis, &unique_cache_namespace());
+    let write = write_service(
+        pool.clone(),
+        connect_redis().await,
+        &unique_cache_namespace(),
+    );
     let marker = seed_marker(
         &pool,
         Seed {
-            title: "标题".to_string(),
-            description: Some("描述".to_string()),
+            title: "原文".into(),
+            description: Some("原描述".into()),
             ..Default::default()
         },
     )
     .await;
-
-    // 无有效 en 译文，只给标题 → 400。
-    let error = write
+    write
         .create_edit_proposal(
             &owner(),
-            "zh",
+            "en",
             marker,
             MarkerUpdateRequest {
-                title: Some("EN only".to_string()),
-                language: Some("en".to_string()),
+                title: Some("中文更新".into()),
+                language: Some("en".into()),
                 ..Default::default()
             },
         )
         .await
-        .unwrap_err();
-    assert_bad(
-        error,
-        "该语言尚无有效译文，请同时填写标题和描述（描述可为空）",
+        .unwrap();
+    let proposal = write
+        .pending_edit_proposals(&admin())
+        .await
+        .unwrap()
+        .remove(0);
+    assert_eq!(proposal.language, "zh");
+    assert_eq!(proposal.description.as_deref(), Some("原描述"));
+    let saved = write
+        .approve_edit_proposal(&admin(), proposal.id)
+        .await
+        .unwrap();
+    assert_eq!(saved.source_language, "zh");
+    assert_eq!(saved.title, "中文更新");
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM map_marker_translations WHERE marker_id=$1",
+            &[marker]
+        )
+        .await,
+        0
     );
-
-    // 同时给标题与空描述 → 允许。
-    write
-        .create_edit_proposal(
-            &owner(),
-            "zh",
-            marker,
-            MarkerUpdateRequest {
-                title: Some("EN only".to_string()),
-                description: Some(String::new()),
-                language: Some("en".to_string()),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-
-    // 有有效 en 译文后允许只补标题。
-    let hash = source_hash_components("zh", Some("标题"), Some("描述"));
-    seed_translation(&pool, marker, "en", "EN title", Some("EN desc"), &hash).await;
-    write
-        .create_edit_proposal(
-            &owner(),
-            "zh",
-            marker,
-            MarkerUpdateRequest {
-                title: Some("EN title v2".to_string()),
-                language: Some("en".to_string()),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-
     pool.close().await;
 }
 
@@ -1065,7 +1050,7 @@ async fn null_or_stale_base_version_conflict_keeps_pending() {
         WriteError::Conflict(_)
     ));
 
-    sqlx::query("UPDATE marker_edit_proposals SET base_marker_version = 1 WHERE id = $1")
+    sqlx::query("UPDATE marker_edit_proposals SET base_marker_version = 1, base_content = NULL WHERE id = $1")
         .bind(proposal)
         .execute(&pool)
         .await
@@ -1084,7 +1069,7 @@ async fn null_or_stale_base_version_conflict_keeps_pending() {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("UPDATE map_markers SET version = 3 WHERE id = $1")
+    sqlx::query("UPDATE map_markers SET version = 3, title = 'Newer content' WHERE id = $1")
         .bind(marker)
         .execute(&pool)
         .await
@@ -1233,103 +1218,74 @@ async fn source_and_translation_edits_share_marker_version() {
 }
 
 #[tokio::test]
-async fn forced_translation_failure_rolls_back_marker_and_proposal() {
+async fn chinese_approval_does_not_write_translations_and_manual_sync_remains_atomic() {
     let (_temp, pool) = TempDatabase::create_migrated().await;
-    let redis = connect_redis().await;
-    let write = write_service(pool.clone(), redis, &unique_cache_namespace());
-    let marker = seed_marker(
-        &pool,
-        Seed {
-            title: "待审点位".to_string(),
-            review_status: "PENDING".to_string(),
-            version: 7,
-            ..Default::default()
-        },
-    )
-    .await;
+    let write = write_service(
+        pool.clone(),
+        connect_redis().await,
+        &unique_cache_namespace(),
+    );
+    let marker = seed_marker(&pool, Seed::default()).await;
     write
         .create_edit_proposal(
             &owner(),
-            "zh",
+            "en",
             marker,
             MarkerUpdateRequest {
-                title: Some("FAIL_TRANSLATION".to_string()),
-                description: Some("desc".to_string()),
-                language: Some("en".to_string()),
+                title: Some("中文修改".into()),
+                description: Some("中文描述".into()),
+                language: Some("en".into()),
                 ..Default::default()
             },
         )
         .await
         .unwrap();
-    let proposal: i64 =
-        sqlx::query_scalar("SELECT id FROM marker_edit_proposals WHERE marker_id = $1")
-            .bind(marker)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-
-    // 测试库故障注入：目标译文写入必然失败，用于验证整体回滚。
-    sqlx::query(
-        "CREATE OR REPLACE FUNCTION lycoris_fail_translation() RETURNS trigger AS $$
-         BEGIN
-             IF NEW.title = 'FAIL_TRANSLATION' THEN
-                 RAISE EXCEPTION 'forced translation failure';
-             END IF;
-             RETURN NEW;
-         END;
-         $$ LANGUAGE plpgsql",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "CREATE TRIGGER lycoris_fail_translation_trigger
-         BEFORE INSERT OR UPDATE ON map_marker_translations
-         FOR EACH ROW EXECUTE FUNCTION lycoris_fail_translation()",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    let result = write.approve_edit_proposal(&admin(), proposal).await;
+    let proposal = write
+        .pending_edit_proposals(&admin())
+        .await
+        .unwrap()
+        .remove(0);
+    sqlx::raw_sql("CREATE FUNCTION fail_translation() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'translation unavailable'; END; $$ LANGUAGE plpgsql;
+        CREATE TRIGGER fail_translation BEFORE INSERT OR UPDATE ON map_marker_translations FOR EACH ROW EXECUTE FUNCTION fail_translation();")
+        .execute(&pool).await.unwrap();
+    let saved = write
+        .approve_edit_proposal(&admin(), proposal.id)
+        .await
+        .unwrap();
+    assert_eq!(saved.title, "中文修改");
+    assert_eq!(saved.source_language, "zh");
+    assert_eq!(saved.review_status, "APPROVED");
     assert!(
-        result.is_err(),
-        "强制译文失败时审核必须整体失败，实际 {result:?}"
+        write
+            .admin_update_marker(
+                &admin(),
+                "en",
+                marker,
+                MarkerUpdateRequest {
+                    title: Some("Manual English".into()),
+                    description: Some("English".into()),
+                    language: Some("en".into()),
+                    ..Default::default()
+                }
+            )
+            .await
+            .is_err()
     );
-
-    let (version, status): (i64, String) =
-        sqlx::query_as("SELECT version, review_status FROM map_markers WHERE id = $1")
-            .bind(marker)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(version, 7, "marker 更新必须随事务回滚");
-    assert_eq!(status, "PENDING", "marker 审核状态必须随事务回滚");
-    let proposal_status: String =
-        sqlx::query_scalar("SELECT status FROM marker_edit_proposals WHERE id = $1")
-            .bind(proposal)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(proposal_status, "PENDING", "proposal 必须随事务回滚");
-    let translations: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM map_marker_translations WHERE marker_id = $1 AND language = 'en'",
-    )
-    .bind(marker)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(translations, 0, "失败译文不得残留");
-
-    sqlx::query("DROP TRIGGER lycoris_fail_translation_trigger ON map_marker_translations")
-        .execute(&pool)
+    let version: i64 = sqlx::query_scalar("SELECT version FROM map_markers WHERE id=$1")
+        .bind(marker)
+        .fetch_one(&pool)
         .await
         .unwrap();
-    sqlx::query("DROP FUNCTION lycoris_fail_translation()")
-        .execute(&pool)
-        .await
-        .unwrap();
-
+    assert_eq!(version, saved.version, "failed manual sync must roll back");
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM map_marker_translations WHERE marker_id=$1",
+            &[marker]
+        )
+        .await,
+        0
+    );
     pool.close().await;
 }
 
@@ -1455,5 +1411,173 @@ async fn cache_first_invalidation_and_redis_failure_still_commit() {
     assert!(started.elapsed() < Duration::from_secs(1));
 
     let _: i64 = redis.del(format!("{namespace}:gen")).await.unwrap();
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn image_and_review_changes_do_not_invalidate_content_but_content_changes_do() {
+    let (_temp, pool) = TempDatabase::create_migrated().await;
+    let write = write_service(
+        pool.clone(),
+        connect_redis().await,
+        &unique_cache_namespace(),
+    );
+    let mut request = valid_create();
+    request.language = Some("en".into());
+    let marker = write.create_marker(&owner(), "en", request).await.unwrap();
+    assert_eq!(marker.source_language, "zh");
+    write
+        .create_edit_proposal(
+            &owner(),
+            "en",
+            marker.id,
+            MarkerUpdateRequest {
+                title: Some("修改内容".into()),
+                language: Some("en".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let proposal = write
+        .pending_edit_proposals(&admin())
+        .await
+        .unwrap()
+        .remove(0);
+    write.approve_marker(&admin(), marker.id).await.unwrap();
+    sqlx::query("UPDATE map_markers SET mark_image='/uploads/markers/test.jpg', version=version+1 WHERE id=$1")
+        .bind(marker.id).execute(&pool).await.unwrap();
+    let approved = write
+        .approve_edit_proposal(&admin(), proposal.id)
+        .await
+        .unwrap();
+    assert_eq!(approved.title, "修改内容");
+    assert_eq!(
+        approved.mark_image.as_deref(),
+        Some("/uploads/markers/test.jpg")
+    );
+    write
+        .create_edit_proposal(
+            &owner(),
+            "en",
+            marker.id,
+            MarkerUpdateRequest {
+                title: Some("旧提案".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let stale = write
+        .pending_edit_proposals(&admin())
+        .await
+        .unwrap()
+        .remove(0);
+    write
+        .admin_update_marker(
+            &admin(),
+            "zh",
+            marker.id,
+            MarkerUpdateRequest {
+                title: Some("较新的内容".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        write.approve_edit_proposal(&admin(), stale.id).await,
+        Err(WriteError::Conflict(_))
+    ));
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn upgrade_backfills_only_current_proposals_and_retains_manual_english() {
+    let temp = TempDatabase::create().await;
+    let pool = temp.connect_pool().await;
+    let previous = sqlx::migrate::Migrator::with_migrations(
+        lycoris_backend::migrate::MIGRATOR
+            .iter()
+            .filter(|m| m.version < 8)
+            .cloned()
+            .collect(),
+    );
+    previous.run(&pool).await.unwrap();
+    let marker = seed_marker(
+        &pool,
+        Seed {
+            lat: 31.2304,
+            lng: 121.4737,
+            source_language: "en".into(),
+            review_status: "PENDING".into(),
+            version: 2,
+            open_time_start: Some("09:00".into()),
+            open_time_end: Some("17:00".into()),
+            ..Default::default()
+        },
+    )
+    .await;
+    let published = seed_marker(
+        &pool,
+        Seed {
+            source_language: "en".into(),
+            ..Default::default()
+        },
+    )
+    .await;
+    seed_translation(&pool, published, "zh", "现有译文", None, "test-hash").await;
+    for version in [2, 1] {
+        sqlx::query(
+            "INSERT INTO marker_edit_proposals (marker_id, marker_title, marker_lat, marker_lng,
+            proposer_username, proposer_public_id, proposer_is_owner, category, title, language,
+            is_public, is_active, base_marker_version, status, created_at)
+            SELECT id, title, lat, lng, 'owner', user_public_id, true, category, '中文修改', 'en',
+            is_public, is_active, $2, 'PENDING', now() FROM map_markers WHERE id = $1",
+        )
+        .bind(marker)
+        .bind(version as i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    lycoris_backend::migrate::run(&pool).await.unwrap();
+    let languages: Vec<String> =
+        sqlx::query_scalar("SELECT source_language FROM map_markers ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(languages, vec!["zh", "en"]);
+    let proposals: Vec<(i64, String, Option<serde_json::Value>)> =
+        sqlx::query_as("SELECT id, language, base_content FROM marker_edit_proposals ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(proposals[0].1, "zh");
+    assert!(proposals[0].2.is_some());
+    assert!(proposals[1].2.is_none());
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM map_marker_translations")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        1
+    );
+    // A photo-only version change must still match the SQL-backfilled Rust snapshot.
+    sqlx::query("UPDATE map_markers SET mark_image = '/uploads/synthetic.webp', version = version + 1 WHERE id = $1")
+        .bind(marker).execute(&pool).await.unwrap();
+    let write = write_service(
+        pool.clone(),
+        connect_redis().await,
+        &unique_cache_namespace(),
+    );
+    write
+        .approve_edit_proposal(&admin(), proposals[0].0)
+        .await
+        .unwrap();
+    assert!(matches!(
+        write.approve_edit_proposal(&admin(), proposals[1].0).await,
+        Err(WriteError::Conflict(_))
+    ));
     pool.close().await;
 }
