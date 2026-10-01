@@ -9,6 +9,7 @@ import { ApiError } from '@/shared/api/ApiError'
 import type { User } from '@/shared/api/users'
 import { syntheticPlace } from '@/features/dev/placeFixtures'
 import * as api from './api'
+import * as privatePlaces from '@/shared/api/privatePlaces'
 import AdminPage from './AdminPage'
 import { deniedAccess } from './useAdminAccess'
 const user: User = {
@@ -318,4 +319,91 @@ it('releases the mutation lock even if cache refresh itself rejects', async () =
     vi.mocked(api.readMarkers).mockResolvedValue([])
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
     await screen.findByText('No items.')
+})
+
+it('releases the review actions while a post-approval refresh is still waiting', async () => {
+    const first = syntheticPlace({ id: 1, title: 'First pending', reviewStatus: 'PENDING' })
+    const second = syntheticPlace({ id: 2, title: 'Second pending', reviewStatus: 'PENDING' })
+    vi.mocked(api.readMarkers).mockResolvedValueOnce([first, second])
+    let finishRefresh!: (value: ReturnType<typeof syntheticPlace>[]) => void
+    vi.mocked(api.readMarkers).mockImplementation(
+        () =>
+            new Promise((resolve) => {
+                finishRefresh = resolve
+            }),
+    )
+    mount()
+    await screen.findByRole('heading', { name: first.title })
+    fireEvent.click(
+        within(screen.getAllByRole('article')[0]!).getByRole('button', { name: 'Approve' }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+    await screen.findByText('Completed.')
+    await waitFor(() => expect(api.readMarkers).toHaveBeenCalledTimes(2))
+    try {
+        expect(screen.queryByRole('heading', { name: first.title })).not.toBeInTheDocument()
+        expect(
+            within(
+                screen.getByRole('heading', { name: second.title }).closest('article')!,
+            ).getByRole('button', { name: 'Approve' }),
+        ).toBeEnabled()
+    } finally {
+        await act(async () => finishRefresh([second]))
+    }
+})
+
+it('reviews Chinese source content even when the dashboard language is English', async () => {
+    mount()
+    await screen.findByRole('heading', { name: 'Review synthetic' })
+    expect(api.readMarkers).toHaveBeenCalledWith(false, 'zh', expect.any(AbortSignal))
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+    await waitFor(() =>
+        expect(api.moderate).toHaveBeenCalledWith(
+            'markers',
+            1,
+            'approve',
+            'zh',
+            expect.any(AbortSignal),
+        ),
+    )
+})
+
+it('keeps other content proposals actionable without refetching every baseline', async () => {
+    vi.mocked(api.readMarkers).mockResolvedValue([])
+    const places = [
+        syntheticPlace({ id: 10, title: '中文原文一', contentLanguage: 'zh' }),
+        syntheticPlace({ id: 20, title: '中文原文二', contentLanguage: 'zh' }),
+    ]
+    const proposals = places.map((place, index) => ({
+        ...place,
+        id: index + 1,
+        markerId: place.id,
+        markerTitle: place.title,
+        title: `中文修改${index}`,
+        language: 'zh',
+        proposerUsername: 'synthetic',
+        proposerPublicId: 'A',
+        proposerIsOwner: true,
+        status: 'PENDING' as const,
+    }))
+    vi.mocked(api.readEdits).mockResolvedValueOnce(proposals).mockResolvedValue([proposals[1]!])
+    const read = vi
+        .spyOn(privatePlaces, 'readAccountPlace')
+        .mockImplementation(async (id) => places.find((place) => String(place.id) === id)!)
+    mount()
+    await waitFor(() =>
+        expect(
+            screen
+                .getAllByRole('button', { name: 'Approve' })
+                .every((button) => !button.hasAttribute('disabled')),
+        ).toBe(true),
+    )
+    fireEvent.click(screen.getAllByRole('button', { name: 'Approve' })[0]!)
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+    await screen.findByText('Completed.')
+    await waitFor(() => expect(screen.getAllByRole('article')).toHaveLength(1))
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled()
+    expect(read.mock.calls.filter(([id]) => id === '20')).toHaveLength(1)
+    expect(read.mock.calls.every(([, lang]) => lang === 'zh')).toBe(true)
 })

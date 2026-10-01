@@ -1,6 +1,6 @@
 import { VenueTag } from '@/features/places/VenueTag'
 import { useEffect, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Marker } from '@/shared/api/markers'
 import { DesignButton, CategoryBadge } from '@/shared/ui/design-primitives'
 import {
@@ -29,7 +29,7 @@ export function Moderation({ all }: { all: boolean }) {
         retry: false,
         queryFn: ({ signal }): Promise<Entry[]> =>
             work.run(async (s) => {
-                const markers = await api.readMarkers(all, ui.language, s)
+                const markers = await api.readMarkers(all, all ? ui.language : 'zh', s)
                 if (all) return markers.map((item) => ({ kind: 'markers', item }) as const)
                 const [edits, images] = await Promise.all([api.readEdits(s), api.readImages(s)])
                 return [
@@ -120,9 +120,10 @@ function ReviewCard({
 }) {
     const ui = useAdminUi(),
         work = useAdminWork(),
-        { item } = entry
+        { item } = entry,
+        client = useQueryClient()
     const title = entry.kind === 'markers' ? entry.item.title : entry.item.markerTitle
-    const proposalLanguage = entry.kind === 'edits' && entry.item.language === 'en' ? 'en' : 'zh'
+    const proposalLanguage = 'zh'
     const current = useQuery({
         queryKey: [
             ...work.prefix,
@@ -155,7 +156,27 @@ function ReviewCard({
         work.confirm({
             label: `${ui.message(decision === 'approve' ? 'Approve' : 'Reject')} · ${ui.message({ markers: 'New place', edits: 'Content changes', images: 'Photo submission' }[entry.kind])} · ${title} #${item.id}`,
             detail: entry.kind === 'edits' ? entry.item.title : title,
-            action: (signal) => api.moderate(entry.kind, item.id, decision, ui.language, signal),
+            action: (signal) => api.moderate(entry.kind, item.id, decision, 'zh', signal),
+            onSuccess: () => {
+                // A photo or content decision only changes this place's baseline.
+                const currentKey = [
+                    ...work.prefix,
+                    'current',
+                    entry.kind === 'markers' ? item.id : entry.item.markerId,
+                ]
+                if (client.getQueriesData({ queryKey: currentKey }).length)
+                    void client.invalidateQueries({ queryKey: currentKey }).catch(() => undefined)
+                // Remove only the confirmed submission while the queue refreshes.
+                client.setQueriesData<Entry[]>(
+                    {
+                        queryKey: [...work.prefix, 'review'],
+                    },
+                    (entries) =>
+                        entries?.filter(
+                            (row) => row.kind !== entry.kind || row.item.id !== item.id,
+                        ),
+                )
+            },
         })
     return (
         <article className="admin-card">
