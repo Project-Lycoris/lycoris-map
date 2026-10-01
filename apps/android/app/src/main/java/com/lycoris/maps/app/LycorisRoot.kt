@@ -104,7 +104,7 @@ fun LycorisRoot(model: HomeViewModel) {
         mapSource = if (preferences.initialized) renderSource else MapSource.OSM,
         searchType = preferences.searchType,
         secondaryTitle = title, secondaryKey = page?.let { if (it == SecondaryPage.DETAIL) "detail:${detail.id}" else if (it == SecondaryPage.ACCOUNT) "account:$accountPage" else it.name }, onCloseSecondary = model::closeSecondary, onBackSecondary = ::close,
-        notice = if (picking) { if (zh) "点击地图选择点位位置。" else "Tap the map to choose a place." } else notice,
+        notice = if (picking) { if (zh) "正在标注模式，请在地图上点击位置。" else "Tap the map to choose a place." } else notice,
         onDismissNotice = { if (picking) model.cancelPicking() else model.message(null) },
         onAttribution = {
             val url = if (renderSource == MapSource.TIANDITU) "https://www.tianditu.gov.cn/" else "https://www.openstreetmap.org/copyright"

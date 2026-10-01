@@ -46,14 +46,7 @@ export function DesktopPanel(props: Props) {
                 <ContributionForm {...props.contribution} />
             </section>
         )
-    if (panel === 'contribute')
-        return (
-            <div className="contribution-bar">
-                <FigmaIcon name="info" />
-                <span>{ui.text('Click on the map to add points.')}</span>
-                <IconButton icon="close" label="Close contribution mode" onClick={close} />
-            </div>
-        )
+    if (panel === 'contribute') return null
     const heading = isSettingsPanel(panel)
         ? settingsTitles[panel]
         : panel.charAt(0).toUpperCase() + panel.slice(1)

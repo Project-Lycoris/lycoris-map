@@ -92,7 +92,8 @@ private enum WriteWaitError: Error { case missingWrite }
     for (name, language, large, locale) in [
       ("en", "en", false, false), ("zh-AXXXL", "zh", true, true),
     ] {
-      let app = launch(language: language, large: large, locale: locale, now: "2026-09-20T13:45:00Z")
+      let app = launch(
+        language: language, large: large, locale: locale, now: "2026-09-20T13:45:00Z")
       // This case verifies detail typography. Expand first so the search field
       // is stationary before typing; collapsed-row gestures have their own suite.
       let handle = app.buttons["map.panel.handle"]
@@ -198,16 +199,8 @@ private enum WriteWaitError: Error { case missingWrite }
   func testNewToiletOffersAllEightVenues() async throws {
     try await resetFixture()
     let app = launch(now: "2026-09-20T03:00:00Z")
-    // Use the explicit map-selection entry above the new contribution form.
     signInViaContribute(app)
-    let useLocation = app.buttons["contribution.confirm-location"]
-    XCTAssertTrue(useLocation.waitForExistence(timeout: 10))
-    // Tap the map to choose a coordinate, then wait for the button to enable.
     app.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.4)).tap()
-    let enabled = XCTNSPredicateExpectation(
-      predicate: NSPredicate(format: "enabled == true"), object: useLocation)
-    XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed)
-    useLocation.tap()
     let picker = app.buttons["contribution.venue"]
     XCTAssertTrue(picker.waitForExistence(timeout: 8))
     // A brand-new accessible toilet starts at the other default.
@@ -226,70 +219,61 @@ private enum WriteWaitError: Error { case missingWrite }
     attach(app, "metadata-new-venue")
   }
 
-  func testCurrentLocationDraftCanChooseAnotherLocationWithoutLosingFields() async throws {
-    try await resetFixture()
-    let app = launch(now: "2026-09-20T03:00:00Z")
-    signInViaContribute(app, chooseOther: false)
-    let title = app.textFields["contribution.title"]
-    XCTAssertTrue(title.waitForExistence(timeout: 20), "The simulated GPS fix should create the draft")
-    let changeLocation = app.buttons["contribution.location"]
-    XCTAssertTrue(changeLocation.isHittable)
-    XCTAssertLessThan(changeLocation.frame.minY, title.frame.minY)
-    let original = try XCTUnwrap(changeLocation.value as? String)
-    XCTAssertEqual(original, "31.23040, 121.47370", "Use the Core Location fix, not the viewport")
-    fill(title, "Keep my contribution")
-    title.typeText("\n")
-    attach(app, "contribution-current-location")
-    changeLocation.tap()
-    let confirm = app.buttons["contribution.confirm-location"]
-    XCTAssertTrue(confirm.waitForExistence(timeout: 8))
-    XCTAssertEqual(confirm.value as? String, original)
-    let alternate = app.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.35))
-    alternate.tap()
-    let changed = XCTNSPredicateExpectation(
-      predicate: NSPredicate(format: "enabled == true AND value != %@", original), object: confirm)
-    XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 8), .completed)
-    app.buttons["contribution.cancel-location"].tap()
-    XCTAssertTrue(title.waitForExistence(timeout: 8))
-    XCTAssertEqual(title.value as? String, "Keep my contribution")
-    XCTAssertEqual(changeLocation.value as? String, original, "Cancel must preserve the saved point")
-
-    changeLocation.tap()
-    XCTAssertTrue(confirm.waitForExistence(timeout: 8))
-    alternate.tap()
-    let changedAgain = XCTNSPredicateExpectation(
-      predicate: NSPredicate(format: "enabled == true AND value != %@", original), object: confirm)
-    XCTAssertEqual(XCTWaiter.wait(for: [changedAgain], timeout: 8), .completed)
-    let selected = try XCTUnwrap(confirm.value as? String)
-    confirm.tap()
-    XCTAssertTrue(title.waitForExistence(timeout: 8))
-    XCTAssertEqual(title.value as? String, "Keep my contribution")
-    XCTAssertEqual(changeLocation.value as? String, selected)
-    attach(app, "contribution-alternate-location")
-  }
-
-  /// Run separately with simulator location permission denied. A synchronous
-  /// denied callback must still dismiss the form and reach manual selection.
-  func testDeniedLocationFallsBackToExplicitMapSelection() async throws {
+  func testMapSelectionPreservesFieldsAndSubmitsPickedCoordinate() async throws {
     try await resetFixture()
     let app = launch(language: "zh", locale: true, now: "2026-09-20T03:00:00Z")
-    signInViaContribute(app, chooseOther: false)
-    if app.textFields["contribution.title"].waitForExistence(timeout: 3) {
-      throw XCTSkip("Run this case separately with simulator location permission denied")
-    }
-    let confirm = app.buttons["contribution.confirm-location"]
-    XCTAssertTrue(confirm.waitForExistence(timeout: 10))
-    XCTAssertFalse(confirm.isEnabled)
-    XCTAssertEqual(confirm.value as? String, "")
+    signInViaContribute(app)
+    let title = app.textFields["contribution.title"]
+    XCTAssertFalse(
+      title.exists, "Entering contribution must not create a GPS or camera-center draft")
+    XCTAssertFalse(app.buttons["contribution.confirm-location"].exists)
+    let first = app.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.35))
+    let second = app.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5))
+    first.press(forDuration: 0.05, thenDragTo: second)
+    XCTAssertFalse(title.exists, "Panning is not selecting a point")
+    first.tap()
+    XCTAssertTrue(title.waitForExistence(timeout: 8), "A single map tap opens the form")
+    let changeLocation = app.buttons["contribution.location"]
+    let original = try XCTUnwrap(changeLocation.value as? String)
+    XCTAssertFalse(original.isEmpty)
+    fill(title, "手动选择的位置")
+    title.typeText("\n")
+    changeLocation.tap()
+    XCTAssertTrue(app.staticTexts["contribution.pick-location"].waitForExistence(timeout: 8))
+    app.buttons["contribution.cancel-location"].tap()
+    XCTAssertTrue(title.waitForExistence(timeout: 8))
+    XCTAssertEqual(title.value as? String, "手动选择的位置")
+    XCTAssertEqual(changeLocation.value as? String, original)
+    changeLocation.tap()
+    XCTAssertTrue(app.staticTexts["contribution.pick-location"].waitForExistence(timeout: 8))
+    second.tap()
+    XCTAssertTrue(title.waitForExistence(timeout: 8))
+    let selected = try XCTUnwrap(changeLocation.value as? String)
+    XCTAssertNotEqual(selected, original)
+    XCTAssertEqual(title.value as? String, "手动选择的位置")
+    attach(app, "contribution-map-selected-form")
+    app.buttons["contribution.submit"].tap()
+    XCTAssertTrue(app.staticTexts["contribution.complete"].waitForExistence(timeout: 20))
+    let write = try await waitForWrite(method: "POST")
+    let lat = try XCTUnwrap(write["lat"] as? Double)
+    let lng = try XCTUnwrap(write["lng"] as? Double)
+    XCTAssertEqual(String(format: "%.5f, %.5f", lat, lng), selected)
+  }
+
+  func testCancellingMarkingModeDoesNotCreateADraft() async throws {
+    try await resetFixture()
+    let app = launch(language: "zh", locale: true, now: "2026-09-20T03:00:00Z")
+    signInViaContribute(app)
+    XCTAssertFalse(app.textFields["contribution.title"].exists)
+    attach(app, "contribution-marking-mode")
+    app.buttons["contribution.cancel-location"].tap()
+    XCTAssertFalse(app.staticTexts["contribution.pick-location"].exists)
+    XCTAssertFalse(app.textFields["contribution.title"].exists)
+    app.buttons["map.contribute"].tap()
+    XCTAssertTrue(app.staticTexts["contribution.pick-location"].waitForExistence(timeout: 8))
+    XCTAssertFalse(app.textFields["contribution.title"].exists)
     app.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.35)).tap()
-    let selected = XCTNSPredicateExpectation(
-      predicate: NSPredicate(format: "enabled == true AND value != ''"), object: confirm)
-    XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 8), .completed)
-    let point = try XCTUnwrap(confirm.value as? String)
-    confirm.tap()
     XCTAssertTrue(app.textFields["contribution.title"].waitForExistence(timeout: 8))
-    XCTAssertEqual(app.buttons["contribution.location"].value as? String, point)
-    attach(app, "contribution-denied-location-manual-draft")
   }
 
   // MARK: - Helpers
@@ -314,21 +298,13 @@ private enum WriteWaitError: Error { case missingWrite }
     return app
   }
 
-  /// Default creation uses GPS; choosing another point is an explicit action.
-  private func signInViaContribute(_ app: XCUIApplication, chooseOther: Bool = true) {
+  private func signInViaContribute(_ app: XCUIApplication) {
     let contribute = app.buttons["map.contribute"]
     XCTAssertTrue(contribute.waitForExistence(timeout: 10))
     XCTAssertTrue(contribute.isHittable)
     contribute.tap()
     signInIfNeeded(app)
-    guard chooseOther else { return }
-    let changeLocation = app.buttons["contribution.location"]
-    let confirm = app.buttons["contribution.confirm-location"]
-    let entry = XCTNSPredicateExpectation(
-      predicate: NSPredicate { _, _ in changeLocation.exists || confirm.exists }, object: nil)
-    XCTAssertEqual(XCTWaiter.wait(for: [entry], timeout: 10), .completed)
-    if changeLocation.exists { changeLocation.tap() }
-    XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+    XCTAssertTrue(app.staticTexts["contribution.pick-location"].waitForExistence(timeout: 10))
   }
 
   private func signInIfNeeded(_ app: XCUIApplication) {
@@ -380,17 +356,17 @@ private enum WriteWaitError: Error { case missingWrite }
     add(attachment)
   }
 
-  private func waitForWrite(method: String, id: Int) async throws -> [String: Any] {
+  private func waitForWrite(method: String, id: Int? = nil) async throws -> [String: Any] {
     for _ in 0..<40 {
       let writes = try await fixtureJSON(path: "__ui_fixture/writes") as? [[String: Any]] ?? []
       if let match = writes.first(where: {
-        $0["method"] as? String == method && ($0["id"] as? Int) == id
+        $0["method"] as? String == method && (id == nil || ($0["id"] as? Int) == id)
       }), let body = match["body"] as? [String: Any] {
         return body
       }
       try await Task.sleep(for: .milliseconds(250))
     }
-    XCTFail("No \(method) write for marker \(id) reached the fixture")
+    XCTFail("No \(method) write for marker \(id.map(String.init) ?? "new") reached the fixture")
     throw WriteWaitError.missingWrite
   }
 

@@ -115,6 +115,7 @@ it('anchors the phone contribution sheet to the shared snapshot without subtract
         createElement(MemoryRouter, { initialEntries: ['/?lang=en'] }, createElement(MapShell)),
     )
     fireEvent.click(screen.getByRole('button', { name: 'Contribute' }))
+    fireEvent.click(container.querySelector('.product-map')!, { clientX: 200, clientY: 200 })
     await screen.findByRole('form', { name: 'Contribution draft' })
     const sheet = container.querySelector<HTMLElement>('.mobile-sheet.mobile-contribution')!
     // One source of truth: the shell grows by the pan and exposes it once.

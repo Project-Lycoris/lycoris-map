@@ -92,20 +92,13 @@ it.each([false, true])(
         expect(view.container.querySelector('.contribution-form')).toBeNull()
         expect(writes.createMarker).not.toHaveBeenCalled()
         await login()
-        if (mobile) {
-            expect(
-                await screen.findByRole('form', { name: 'Contribution draft' }),
-            ).toBeInTheDocument()
-        } else {
-            expect(screen.getByText('Click on the map to add points.')).toBeInTheDocument()
-            fireEvent.click(view.container.querySelector('.product-map')!, {
-                clientX: 650,
-                clientY: 350,
-            })
-            expect(
-                await screen.findByRole('form', { name: 'Contribution draft' }),
-            ).toBeInTheDocument()
-        }
+        expect(screen.getByText('Click on the map to add points.')).toBeInTheDocument()
+        expect(screen.queryByRole('form', { name: 'Contribution draft' })).not.toBeInTheDocument()
+        fireEvent.click(view.container.querySelector('.product-map')!, {
+            clientX: 200,
+            clientY: 300,
+        })
+        expect(await screen.findByRole('form', { name: 'Contribution draft' })).toBeInTheDocument()
         expect(view.container.querySelector('.leaflet-container')).toBe(map)
         expect(writes.createMarker).not.toHaveBeenCalled()
     },
@@ -130,7 +123,7 @@ it.each(['contribute', 'contribute-form'])(
         mount(false, `/?lang=en&panel=${panel}`)
         expect(await screen.findByRole('dialog', { name: 'Login' })).toBeInTheDocument()
         await login()
-        expect(document.getElementById('map-shell')).toHaveAttribute('data-panel', panel)
+        expect(document.getElementById('map-shell')).toHaveAttribute('data-panel', 'contribute')
     },
 )
 it('does not close a different route when the user leaves during login', async () => {

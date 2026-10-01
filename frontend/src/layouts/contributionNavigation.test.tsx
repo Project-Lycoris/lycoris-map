@@ -82,7 +82,7 @@ it('opens a desktop composer only after a real map click and keeps the selected 
     expect(screen.queryByRole('form', { name: 'Contribution draft' })).not.toBeInTheDocument()
 })
 
-it('opens directly from the phone pen and restores its focus and draft after closing', async () => {
+it('picks a map location from the phone pen and preserves the draft after closing', async () => {
     mockScreen(true)
     const { container } = mount()
     const pen = screen.getByRole('button', { name: 'Contribute' })
@@ -91,6 +91,9 @@ it('opens directly from the phone pen and restores its focus and draft after clo
         new DOMRect(0, 0, 44, 44),
     ] as unknown as DOMRectList)
     fireEvent.click(pen)
+    expect(screen.getByText('Click on the map to add points.')).toBeInTheDocument()
+    expect(screen.queryByRole('form', { name: 'Contribution draft' })).not.toBeInTheDocument()
+    fireEvent.click(container.querySelector('.product-map')!, { clientX: 200, clientY: 300 })
     expect(screen.queryByText('Click on the map to add points.')).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Contribute' })).toHaveFocus()
     fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), {
@@ -102,6 +105,7 @@ it('opens directly from the phone pen and restores its focus and draft after clo
     await waitFor(() => expect(screen.getByRole('button', { name: 'Contribute' })).toHaveFocus())
     expect(screen.getByTestId('route')).toHaveTextContent('/maps?lang=en#kept')
     fireEvent.click(screen.getByRole('button', { name: 'Contribute' }))
+    fireEvent.click(container.querySelector('.product-map')!, { clientX: 220, clientY: 300 })
     expect(screen.getByRole('textbox', { name: 'Title' })).toHaveValue('Phone draft')
     expect(
         screen.getByRole('button', { name: 'Upload photo: local-test.png selected' }),
@@ -109,14 +113,14 @@ it('opens directly from the phone pen and restores its focus and draft after clo
     expect(screen.getByRole('button', { name: 'Submit' })).toHaveAttribute('aria-disabled', 'true')
 })
 
-it('converts an active desktop picker into the phone composer without an extra history entry', async () => {
+it('keeps an active picker across screen sizes until the user chooses a point', async () => {
     const resize = mockScreen(false)
     mount()
     fireEvent.click(screen.getByRole('button', { name: /^Contribute$/ }))
     resize(true)
-    expect(await screen.findByRole('form', { name: 'Contribution draft' })).toBeInTheDocument()
-    expect(screen.queryByText('Click on the map to add points.')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Close contribution form' }))
+    expect(screen.queryByRole('form', { name: 'Contribution draft' })).not.toBeInTheDocument()
+    expect(screen.getByText('Click on the map to add points.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Close contribution mode' }))
     await waitFor(() => expect(screen.getByTestId('route')).toHaveTextContent('/maps?lang=en#kept'))
     expect(screen.queryByRole('form', { name: 'Contribution draft' })).not.toBeInTheDocument()
 })

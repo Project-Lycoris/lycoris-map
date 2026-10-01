@@ -29,7 +29,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "轻点地图选择位置。"
+            "value": "正在标注模式，请在地图上点击位置。"
           }
         }
       }

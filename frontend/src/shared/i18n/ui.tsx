@@ -148,7 +148,7 @@ export const uiMessages = {
     'Voice search is unavailable. Check that Siri and dictation are enabled.':
         '语音搜索不可用，请确认已开启 Siri 与听写。',
     'Voice search failed. Type your search instead.': '语音搜索失败，请改用文字搜索。',
-    'Click on the map to add points.': '点击地图添加点位。',
+    'Click on the map to add points.': '正在标注模式，请在地图上点击位置。',
     'Search positions': '搜索点位',
     'Loading places…': '正在加载点位…',
     'No places found.': '未找到点位。',

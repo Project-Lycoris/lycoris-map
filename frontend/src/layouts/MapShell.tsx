@@ -73,11 +73,23 @@ export function MapShell({
         !!accountFlow &&
         (requestedPanel === 'contribute' || requestedPanel === 'contribute-form') &&
         !session.scope
+    const needsPoint =
+        requestedPanel === 'contribute-form' &&
+        contributor &&
+        contributionState?.phase === 'draft' &&
+        !contributionState.base &&
+        !contributionState.point
     const panel =
         contributionNeedsLogin || (requestedPanel === 'bookmarks' && !showBookmarks)
             ? 'initial'
-            : requestedPanel
-    const contributionOpen = panel === 'contribute-form' || (mobile && panel === 'contribute')
+            : needsPoint
+              ? 'contribute'
+              : requestedPanel
+    const contributionOpen = panel === 'contribute-form'
+    const picking =
+        panel === 'contribute' &&
+        !contributionState?.base &&
+        (!contributionState || contributionState.phase === 'draft')
     const activeRoute = useRef(location.key)
     activeRoute.current = location.key
     const loginRoute = useRef<string | null>(null)
@@ -96,9 +108,6 @@ export function MapShell({
             if (activeRoute.current === key) close()
         })
     }, [contributionNeedsLogin, session.status, session.busy, location.key, accountFlow, close])
-    useEffect(() => {
-        if (mobile && panel === 'contribute') open('contribute-form', 'nav-contribute', true)
-    }, [mobile, panel, open])
     // One visual-viewport snapshot feeds both the CSS shell height and every JS
     // sheet calc, so `100dvh` can never disagree with `innerHeight` again.
     const viewport = useViewportSnapshot()
@@ -131,14 +140,15 @@ export function MapShell({
         mainMenu && !voice ? (menuHeight ?? Infinity) : Infinity,
     )
     const halfSheetHeight = Math.min(mainMenu ? nearbyHeight : 320, fullSheetHeight)
-    const sheetHeight =
-        panel === 'details'
-            ? Math.min(detailHeight, viewportHeight - 46)
-            : snap === 'full'
-              ? fullSheetHeight
-              : snap === 'half'
-                ? halfSheetHeight
-                : Math.min(158, viewportHeight - 46)
+    const sheetHeight = picking
+        ? 0
+        : panel === 'details'
+          ? Math.min(detailHeight, viewportHeight - 46)
+          : snap === 'full'
+            ? fullSheetHeight
+            : snap === 'half'
+              ? halfSheetHeight
+              : Math.min(158, viewportHeight - 46)
     // Top edge of the sheet in the shell's own (layout-origin) coordinates. The
     // shell is anchored at the layout origin and is `bottom` tall, so the sheet
     // top is `viewport.bottom - sheetHeight`; the tool controls are placed at
@@ -168,40 +178,9 @@ export function MapShell({
         )
     }
     const map = useRef<LeafletMap | null>(null)
-    const onMap = useCallback(
-        (value: LeafletMap | null) => {
-            map.current = value
-            if (
-                value &&
-                contributor &&
-                mobile &&
-                contributionOpen &&
-                !contributor.getSnapshot().point
-            )
-                contributor.setPoint(value.getCenter().wrap())
-        },
-        [contributor, mobile, contributionOpen],
-    )
-    useEffect(() => {
-        if (
-            contributor &&
-            mobile &&
-            contributionOpen &&
-            map.current &&
-            contributionState?.phase === 'draft' &&
-            !contributionState.base &&
-            !contributionState.point
-        )
-            contributor.setPoint(map.current.getCenter().wrap())
-    }, [
-        contributor,
-        mobile,
-        contributionOpen,
-        contributionState?.round,
-        contributionState?.phase,
-        contributionState?.base,
-        contributionState?.point,
-    ])
+    const onMap = useCallback((value: LeafletMap | null) => {
+        map.current = value
+    }, [])
     const showMobileSearch = (nextSnap: Snap) => {
         const next = new URLSearchParams(location.search)
         next.set('panel', 'search')
@@ -270,34 +249,25 @@ export function MapShell({
     const [contributionPoint, setContributionPoint] = useState<{ lat: number; lng: number } | null>(
         null,
     )
-    const picking =
-        panel === 'contribute' &&
-        !mobile &&
-        !contributionState?.base &&
-        (!contributionState || contributionState.phase === 'draft')
     const selectPoint = useCallback(
         (point: { lat: number; lng: number } | null) => {
             if (contributor && point) contributor.setPoint(point)
             else setContributionPoint(point)
-            open('contribute-form', 'nav-contribute')
+            open('contribute-form', mobile ? 'mobile-contribute' : 'nav-contribute')
         },
-        [open, contributor],
+        [open, contributor, mobile],
     )
     const startContribution = (phone: boolean) => {
         if (contributor) {
             if (!contributor.beginCreate(browse?.language ?? 'en')) return
-            if (phone && map.current) contributor.setPoint(map.current.getCenter().wrap())
             const current = contributor.getSnapshot()
             open(
-                phone || current.phase !== 'draft' ? 'contribute-form' : 'contribute',
+                current.phase !== 'draft' ? 'contribute-form' : 'contribute',
                 phone ? 'mobile-contribute' : 'nav-contribute',
             )
         } else {
             setContributionPoint(null)
-            open(
-                phone ? 'contribute-form' : 'contribute',
-                phone ? 'mobile-contribute' : 'nav-contribute',
-            )
+            open('contribute', phone ? 'mobile-contribute' : 'nav-contribute')
         }
     }
     const editPlace = () => {
@@ -417,8 +387,9 @@ export function MapShell({
                                   position: browse.location.position,
                                   focus: browse.focus,
                                   onView: browse.onView,
-                                  onSelect: selectPlace,
+                                  onSelect: picking ? (place) => selectPoint(place) : selectPlace,
                                   onCluster: (ids) => {
+                                      if (picking) return
                                       browse.showCluster(ids)
                                       if (mobile) showMobileSearch('full')
                                       else open('search', 'nav-search')
@@ -514,7 +485,7 @@ export function MapShell({
                     }
                 />
             )}
-            {mobile && (
+            {mobile && !picking && (
                 <MobileSheet
                     showBookmarks={showBookmarks}
                     snap={snap}
@@ -617,6 +588,13 @@ export function MapShell({
                         onClick={() => map.current?.zoomOut()}
                         available={!sample}
                     />
+                </div>
+            )}
+            {picking && (
+                <div className="contribution-bar" role="status">
+                    <FigmaIcon name="info" />
+                    <span>{ui.text('Click on the map to add points.')}</span>
+                    <IconButton icon="close" label="Close contribution mode" onClick={close} />
                 </div>
             )}
             <div className="map-notices">
