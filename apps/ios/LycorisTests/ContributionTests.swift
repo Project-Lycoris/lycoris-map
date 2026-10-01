@@ -4,6 +4,15 @@ import Testing
 @testable import Lycoris
 
 @MainActor struct ContributionTests {
+  @Test func englishClientAndRestoredEnglishDraftSubmitChineseContent() throws {
+    var draft = ContributionDraft(owner: "synthetic", origin: "https://example.test", point: GeoPoint(latitude: 31.2, longitude: 121.5)!, language: "en")
+    #expect(draft.fields.language == "zh")
+    draft.fields.language = "en" // A journal created before the language policy changed.
+    draft.fields.title = "中文点位"
+    let body = try #require(JSONSerialization.jsonObject(with: draft.encodedRequest()) as? [String: Any])
+    #expect(body["language"] as? String == "zh")
+  }
+
   private func setup(_ api: ContributionFixture, journal: ContributionJournal? = nil) async -> (
     AccountStore, ContributionStore, ContributionJournal
   ) {

@@ -81,7 +81,7 @@ export class ContributionStore {
         private readonly validatePhoto: (file: File) => Promise<void> = inspectPhoto,
         private readonly upload: typeof resumePhoto = resumePhoto,
     ) {
-        this.snapshot = fresh(0, 'en', session.getSnapshot().scope)
+        this.snapshot = fresh(0, 'zh', session.getSnapshot().scope)
     }
     subscribe = (fn: () => void) => {
         this.listeners.add(fn)
@@ -109,7 +109,8 @@ export class ContributionStore {
         this.snapshot = fresh(this.snapshot.round + 1, language, this.session.getSnapshot().scope)
         this.listeners.forEach((fn) => fn())
     }
-    beginCreate = (language: Language) => {
+    beginCreate = (_language: Language) => {
+        const language = 'zh'
         // Reopen the current work while it uploads; never replace an in-flight draft.
         if (contributionBusy(this.snapshot.phase)) return true
         if (this.snapshot.base || this.snapshot.phase === 'complete') this.reset(language)
@@ -119,7 +120,7 @@ export class ContributionStore {
     beginEdit = (marker: Marker) => {
         if (contributionBusy(this.snapshot.phase)) return false
         if (this.snapshot.base?.id === marker.id && this.snapshot.phase !== 'complete') return true
-        this.reset(marker.contentLanguage === 'zh' ? 'zh' : 'en')
+        this.reset('zh')
         this.publish({
             base: marker,
             draft: draftFromMarker(marker),

@@ -21,7 +21,7 @@ data class ContributionFields(
     val description: String = "",
     val openTimeStart: String = "",
     val openTimeEnd: String = "",
-    val language: String = "en",
+    val language: String = "zh",
     val venueType: String? = null,
 ) {
     fun isValid(): Boolean = title.trim().isNotEmpty() && title.trim().let { it.codePointCount(0, it.length) <= 120 } &&
@@ -36,7 +36,7 @@ data class ContributionFields(
     companion object {
         fun fromMarker(marker: Marker): ContributionFields = ContributionFields(
             marker.title, marker.category, marker.description.orEmpty(), marker.openTimeStart.orEmpty(),
-            marker.openTimeEnd.orEmpty(), marker.contentLanguage, marker.venueType,
+            marker.openTimeEnd.orEmpty(), "zh", marker.venueType,
         )
         private fun validTime(value: String) = value.matches(Regex("(?:[01][0-9]|2[0-3]):[0-5][0-9]"))
     }
@@ -78,12 +78,12 @@ data class ContributionDraft(
     fun frozenBody(): String {
         require(canSubmit)
         return if (original == null) LycorisJson.encodeToString(CreateMarkerRequest(
-            latitude, longitude, fields.category, fields.title.trim(), fields.description, fields.language,
+            latitude, longitude, fields.category, fields.title.trim(), fields.description, "zh",
             fields.openTimeStart, fields.openTimeEnd, creationRequestId, venueType = fields.submittedVenueType,
         )) else LycorisJson.encodeToString(EditMarkerRequest(
             // Older saved drafts have no venue field. Omit it to preserve the server's later
             // classification; the API itself clears it when changing to another category.
-            fields.category, fields.title.trim(), fields.description, fields.language, fields.openTimeStart, fields.openTimeEnd, venueType = fields.venueType,
+            fields.category, fields.title.trim(), fields.description, "zh", fields.openTimeStart, fields.openTimeEnd, venueType = fields.venueType,
         ))
     }
 

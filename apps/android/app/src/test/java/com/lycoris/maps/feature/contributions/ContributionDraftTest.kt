@@ -10,6 +10,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ContributionDraftTest {
+    @Test fun englishClientAndRestoredEnglishDraftSubmitChineseContent() {
+        val draft = ContributionDraft(UUID.randomUUID().toString(), "a", "https://example.test/", 31.2, 121.5,
+            ContributionFields(title = "中文点位", language = "en"))
+        assertEquals("zh", LycorisJson.decodeFromString<CreateMarkerRequest>(draft.frozenBody()).language)
+        val marker = Marker(17, 31.2, 121.5, "accessible_toilet", "原文")
+        assertEquals("zh", LycorisJson.decodeFromString<EditMarkerRequest>(draft.copy(original = marker).frozenBody()).language)
+    }
+
     @Test fun venueSurvivesEditAndDraftRestoreAndCategoryChangesClearIt() {
         val marker = Marker(17, 31.2, 121.5, "accessible_toilet", "Place", venueType = "metro", hoursTimezone = "Asia/Shanghai")
         val draft = ContributionDraft(UUID.randomUUID().toString(), "a", "https://example.test/", marker.lat, marker.lng,

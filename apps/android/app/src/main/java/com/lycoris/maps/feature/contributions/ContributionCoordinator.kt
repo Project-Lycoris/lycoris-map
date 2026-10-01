@@ -129,7 +129,7 @@ class ContributionCoordinator(
         val draft = ContributionDraft(
             id = UUID.randomUUID().toString(), owner = identity.publicId, origin = identity.origin,
             latitude = latitude, longitude = longitude,
-            fields = original?.let(ContributionFields::fromMarker) ?: ContributionFields(language = language),
+            fields = original?.let(ContributionFields::fromMarker) ?: ContributionFields(language = "zh"),
             original = original, updatedAt = System.currentTimeMillis(),
         )
         requireIdentity(identity)

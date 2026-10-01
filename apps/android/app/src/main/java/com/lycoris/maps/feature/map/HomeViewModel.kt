@@ -14,6 +14,7 @@ import com.lycoris.maps.core.map.ViewportPolicy
 import com.lycoris.maps.core.model.GeoBounds
 import com.lycoris.maps.core.model.Language
 import com.lycoris.maps.core.model.PlaceCategory
+import com.lycoris.maps.core.network.requireBody
 import com.lycoris.maps.core.network.ApiFailure
 import com.lycoris.maps.core.model.Marker
 import kotlinx.coroutines.Job
@@ -186,7 +187,9 @@ class HomeViewModel(application: Application, private val saved: SavedStateHandl
         if (accounts.state.value.user == null) { saved["pendingEdit"] = place.id; account(); return }
         val navigation = beginNavigation()
         action {
-            val draft = container.contributions.createDraft(place.lat, place.lng, preferences.value.language.tag, place)
+            val source = accounts.withAuthenticatedRead { api, _ -> api.marker(place.id, "zh").requireBody() }
+            if (navigationGeneration != navigation) return@action
+            val draft = container.contributions.createDraft(source.lat, source.lng, "zh", source)
             if (navigationGeneration == navigation) {
                 saved["draftId"] = draft
                 saved["page"] = SecondaryPage.CONTRIBUTION

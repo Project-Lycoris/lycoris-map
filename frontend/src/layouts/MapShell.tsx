@@ -1,3 +1,4 @@
+import { readAccountPlace } from '@/shared/api/privatePlaces'
 import { mapSourceNames } from '@/features/map/mapSources'
 import { usePreferences } from '@/features/preferences/PreferencesProvider'
 import { isSettingsPanel, settingsTitles, SettingsContent } from '@/features/preferences/Settings'
@@ -270,9 +271,37 @@ export function MapShell({
             open('contribute', phone ? 'mobile-contribute' : 'nav-contribute')
         }
     }
+    const [editNotice, setEditNotice] = useState<string | null>(null)
+    useEffect(() => setEditNotice(null), [location.key, session.scope])
     const editPlace = () => {
-        if (!contributor || !browse?.detail || !contributor.beginEdit(browse.detail)) return
-        open('contribute-form', mobile ? 'mobile-place-edit' : 'desktop-place-edit')
+        if (!contributor || !browse?.detail) return
+        const marker = browse.detail
+        const openEdit = (source: typeof marker) => {
+            if (contributor.beginEdit(source))
+                open('contribute-form', mobile ? 'mobile-place-edit' : 'desktop-place-edit')
+        }
+        if (marker.contentLanguage === 'zh') {
+            openEdit(marker)
+            return
+        }
+        const route = location.key
+        // Never seed the Chinese contribution form with a translated English view.
+        accountFlow?.requireLogin((scope) => {
+            setEditNotice('Loading places…')
+            void session
+                .store!.runPrivate(scope, (signal) =>
+                    readAccountPlace(String(marker.id), 'zh', signal),
+                )
+                .then((source) => {
+                    if (activeRoute.current !== route) return
+                    setEditNotice(null)
+                    openEdit(source)
+                })
+                .catch(() => {
+                    if (activeRoute.current === route && session.store!.isCurrent(scope))
+                        setEditNotice('This place is unavailable.')
+                })
+        })
     }
     const submitContribution = (resendUnconfirmed = false) => {
         if (!contributor || !accountFlow) return
@@ -598,6 +627,7 @@ export function MapShell({
                 </div>
             )}
             <div className="map-notices">
+                {editNotice && <MapNotice key={editNotice} message={editNotice} />}
                 {sourceFailure && (
                     <MapNotice
                         key={sourceFailure.id}

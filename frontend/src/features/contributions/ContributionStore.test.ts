@@ -213,3 +213,16 @@ it('allows discarding a rejected image while preserving the saved place', async 
     expect(store.getSnapshot().phase).toBe('complete')
     expect(api.createMarker).toHaveBeenCalledTimes(1)
 })
+
+it('submits Chinese content from an English UI and an old English draft', async () => {
+    const { store, api, scope } = await setup()
+    store.beginCreate('en')
+    store.change({ ...emptyContributionDraft, title: '中文点位', category: 'toilet' })
+    store.setPoint({ lat: 30, lng: 120 })
+    await store.submit(scope)
+    expect(api.createMarker.mock.calls[0]![0].language).toBe('zh')
+    expect(
+        draftText({ ...emptyContributionDraft, title: '中文修改', category: 'toilet' }, 'en')
+            .language,
+    ).toBe('zh')
+})

@@ -11,7 +11,7 @@ struct ContributionFields: Codable, Equatable {
   var description = ""
   var openTimeStart = ""
   var openTimeEnd = ""
-  var language = "en"
+  var language = "zh"
   /// The selected venue for an accessible toilet. `nil` means "not specified".
   /// Optional so pre-upgrade drafts without the key still decode.
   var venueType: PlaceVenue? = nil
@@ -32,8 +32,8 @@ struct ContributionFields: Codable, Equatable {
 
   /// A brand-new accessible toilet starts at the `other` default. Old drafts
   /// that decode without the key stay `nil` until the user chooses.
-  init(language: String) {
-    self.language = language
+  init(language _: String) {
+    self.language = "zh"
     self.venueType = .other
   }
   init(marker: Marker) {
@@ -42,7 +42,7 @@ struct ContributionFields: Codable, Equatable {
     description = marker.description ?? ""
     openTimeStart = marker.openTimeStart ?? ""
     openTimeEnd = marker.openTimeEnd ?? ""
-    language = marker.contentLanguage
+    language = "zh"
     venueType = marker.venue
     // Only an accessible toilet may carry a venue; ignore a stale server value
     // on any other category so it can never be resent.
@@ -126,7 +126,7 @@ struct ContributionDraft: Codable, Equatable, Identifiable {
   func encodedRequest() throws -> Data {
     var json: [String: Any] = [
       "title": fields.title, "description": fields.description,
-      "category": fields.category.rawValue, "language": fields.language,
+      "category": fields.category.rawValue, "language": "zh",
       "openTimeStart": fields.openTimeStart, "openTimeEnd": fields.openTimeEnd,
     ]
     // Only accessible toilets may carry a venue, and the tag must never be sent

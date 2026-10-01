@@ -79,7 +79,7 @@ final class ContributionStore {
     if draft?.phase == .complete { try discard() }
     guard draft == nil else { return }
     var value = ContributionDraft(
-      owner: owner, origin: origin, point: point, language: account.language)
+      owner: owner, origin: origin, point: point, language: "zh")
     value.fields = Self.normalized(value.fields)
     try journal.save(value)
     draft = value
@@ -95,7 +95,7 @@ final class ContributionStore {
     guard draft == nil else { return }
     let generation = self.generation
     let data = try await account.contributionRequest(
-      AccountRequest(path: "api/markers/\(id)", query: ["lang": account.language]), owner: owner,
+      AccountRequest(path: "api/markers/\(id)", query: ["lang": "zh"]), owner: owner,
       token: token, waitForAccount: true)
     let marker = try JSONDecoder().decode(Marker.self, from: data)
     guard generation == self.generation, draft == nil, token == boundEpoch,
@@ -106,7 +106,7 @@ final class ContributionStore {
     }
     let value = ContributionDraft(
       owner: owner, origin: origin, point: point,
-      language: marker.contentLanguage, marker: marker)
+      language: "zh", marker: marker)
     try journal.save(value)
     draft = value
     message = nil

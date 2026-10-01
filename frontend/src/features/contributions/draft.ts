@@ -52,7 +52,7 @@ export function draftFromMarker(marker: Marker): ContributionDraft {
         closingMinute: end[1] ?? '',
     }
 }
-export function draftText(draft: ContributionDraft, language: Language): MarkerText {
+export function draftText(draft: ContributionDraft, _language: Language): MarkerText {
     const title = draft.title.trim()
     if (!title || [...title].length > 120) throw new Error('Enter a title of 1–120 characters.')
     if (!draft.category) throw new Error('Choose a category.')
@@ -70,7 +70,7 @@ export function draftText(draft: ContributionDraft, language: Language): MarkerT
         category: categories[draft.category],
         venueType: draft.category === 'toilet' ? draft.venueType : null,
         description: draft.description,
-        language,
+        language: 'zh',
         isPublic: draft.isPublic,
         openTimeStart: values.every(Boolean)
             ? `${values[0]!.padStart(2, '0')}:${values[1]!.padStart(2, '0')}`
