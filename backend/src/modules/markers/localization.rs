@@ -366,6 +366,8 @@ mod tests {
             last_edited_by_owner: true,
             mark_image: None,
             venue_type: Some("other".to_string()),
+            categories: vec!["accessible_toilet".into()],
+            opening_hours_note: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

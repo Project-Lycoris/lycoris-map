@@ -71,3 +71,42 @@
     color: #34467c;
     background: #e0e5ff;
 }
+
+.venue-park,
+.facility-friendly_clinic {
+    background: #d6f2da;
+    color: #245b31;
+}
+.facility-self_definition {
+    background: #eaddff;
+    color: #53377b;
+}
+.facility-baby_room {
+    background: #ffead0;
+    color: #764600;
+}
+.facility-accessible_toilet {
+    background: #dceeff;
+    color: #174f85;
+}
+.place-hours-note {
+    white-space: pre-wrap;
+    margin: 11px 0;
+    font: 400 14px/1.5 var(--ui-font-body);
+}
+.place-gallery {
+    min-width: 0;
+}
+.place-gallery-controls {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 16px;
+    margin-top: 8px;
+}
+.place-gallery-controls button {
+    min-width: 44px;
+    min-height: 36px;
+    border-radius: 18px;
+    background: var(--ui-surface-secondary, #eee7f7);
+}

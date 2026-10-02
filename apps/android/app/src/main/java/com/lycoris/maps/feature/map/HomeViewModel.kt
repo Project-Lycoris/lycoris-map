@@ -14,6 +14,7 @@ import com.lycoris.maps.core.map.ViewportPolicy
 import com.lycoris.maps.core.model.GeoBounds
 import com.lycoris.maps.core.model.Language
 import com.lycoris.maps.core.model.PlaceCategory
+import com.lycoris.maps.core.network.requireBody
 import com.lycoris.maps.core.network.ApiFailure
 import com.lycoris.maps.core.model.Marker
 import kotlinx.coroutines.Job
@@ -186,7 +187,9 @@ class HomeViewModel(application: Application, private val saved: SavedStateHandl
         if (accounts.state.value.user == null) { saved["pendingEdit"] = place.id; account(); return }
         val navigation = beginNavigation()
         action {
-            val draft = container.contributions.createDraft(place.lat, place.lng, preferences.value.language.tag, place)
+            val source = accounts.withAuthenticatedRead { api, _ -> api.marker(place.id, "zh").requireBody() }
+            if (navigationGeneration != navigation) return@action
+            val draft = container.contributions.createDraft(source.lat, source.lng, "zh", source)
             if (navigationGeneration == navigation) {
                 saved["draftId"] = draft
                 saved["page"] = SecondaryPage.CONTRIBUTION
@@ -245,7 +248,7 @@ class HomeViewModel(application: Application, private val saved: SavedStateHandl
         catch (_: Exception) { message(if (preferences.value.language == Language.ZH) "无法保存或提交，请检查网络及本机存储后重试。" else "Could not save or submit. Check your connection and device storage, then retry.") }
     }
     fun message(value: String?) { notices.showAction(value) }
-    fun backgroundMessage(value: String) { notices.showBackground(value) }
+    fun backgroundMessage(value: String?) { notices.showBackground(value) }
     fun language(value: Language) = action { container.preferences.setLanguage(value) }
     fun searchType(value: SearchType) = action { container.preferences.setSearchType(value) }
     fun acceptTencentPrivacy() = action { container.preferences.acceptTencentPrivacy() }
@@ -264,9 +267,14 @@ fun ApiFailure.displayMessage(language: Language): String {
     val zh = language == Language.ZH
     return when (this) {
         is ApiFailure.SessionRequired, is ApiFailure.SessionChanged -> if (zh) "请重新登录后再试。" else "Please sign in and try again."
-        is ApiFailure.Network -> if (zh) "网络连接失败，请重试。" else "Could not connect. Please try again."
+        is ApiFailure.Network -> if (timedOut) { if (zh) "点位加载超时，请重试。" else "Loading places timed out. Try again." }
+            else { if (zh) "网络不可用，请检查连接后重试。" else "Network unavailable. Check your connection and try again." }
+        is ApiFailure.InvalidResponse -> if (zh) "点位数据无法解析，请重试。" else "The place data could not be read. Try again."
         is ApiFailure.Http -> when (status) {
             401 -> if (zh) "登录已过期，或账号密码不正确。" else "Please check your sign-in details or sign in again."
+            403 -> if (zh) "当前账号无权查看这些点位。" else "You do not have permission to view these places."
+            408, 504 -> if (zh) "点位加载超时，请重试。" else "Loading places timed out. Try again."
+            in 500..599 -> if (zh) "点位服务暂时不可用，请稍后重试。" else "The place service is temporarily unavailable. Try again later."
             404 -> if (zh) "这个点位已不可用。" else "This place is no longer available."
             429 -> if (zh) "请求过于频繁，请稍后再试。" else "Please wait a moment before trying again."
             else -> if (zh) "暂时无法完成，请稍后重试。" else "Could not complete the request. Please try again."

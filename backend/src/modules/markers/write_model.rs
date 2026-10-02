@@ -25,7 +25,7 @@ pub const MSG_MARK_IMAGE_UPLOAD_ONLY: &str = "markImage 只能为空，请通过
 pub const MSG_VENUE_TYPE_INVALID: &str = "venueType 不合法";
 
 /// 受控场所标签取值（`accessible_toilet` 专属，与最新场所标签迁移的 CHECK 一致）。
-pub const VENUE_TYPES: [&str; 8] = [
+pub const VENUE_TYPES: [&str; 9] = [
     "metro",
     "hospital",
     "mall",
@@ -33,6 +33,7 @@ pub const VENUE_TYPES: [&str; 8] = [
     "school",
     "public_toilet",
     "airport",
+    "park",
     "other",
 ];
 
@@ -76,6 +77,8 @@ pub struct MarkerCreateRequest {
     pub lat: Option<f64>,
     pub lng: Option<f64>,
     pub category: Option<String>,
+    pub categories: Option<Vec<String>>,
+    pub opening_hours_note: Option<String>,
     pub title: Option<String>,
     pub description: Option<String>,
     pub language: Option<String>,
@@ -94,6 +97,8 @@ pub struct MarkerCreateRequest {
 #[serde(rename_all = "camelCase")]
 pub struct MarkerUpdateRequest {
     pub category: Option<String>,
+    pub categories: Option<Vec<String>>,
+    pub opening_hours_note: Option<String>,
     pub title: Option<String>,
     pub description: Option<String>,
     pub language: Option<String>,
@@ -125,11 +130,14 @@ pub struct EditProposalRow {
     pub open_time_start: Option<String>,
     pub open_time_end: Option<String>,
     pub venue_type: Option<String>,
+    pub categories: Vec<String>,
+    pub opening_hours_note: Option<String>,
     pub proposer_username: String,
     pub proposer_public_id: Option<String>,
     pub proposer_is_owner: bool,
     pub status: String,
     pub base_marker_version: Option<i64>,
+    pub base_content: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -151,6 +159,8 @@ pub struct EditProposalDto {
     pub open_time_start: Option<String>,
     pub open_time_end: Option<String>,
     pub venue_type: Option<String>,
+    pub categories: Vec<String>,
+    pub opening_hours_note: Option<String>,
     pub proposer_username: String,
     pub proposer_public_id: Option<String>,
     pub proposer_is_owner: bool,
@@ -175,6 +185,8 @@ impl From<EditProposalRow> for EditProposalDto {
             open_time_start: row.open_time_start,
             open_time_end: row.open_time_end,
             venue_type: row.venue_type,
+            categories: row.categories,
+            opening_hours_note: row.opening_hours_note,
             proposer_username: row.proposer_username,
             proposer_public_id: row.proposer_public_id,
             proposer_is_owner: row.proposer_is_owner,

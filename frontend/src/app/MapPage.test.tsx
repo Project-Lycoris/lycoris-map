@@ -166,7 +166,9 @@ it.each(['/maps?markerId=unsafe', '/maps?panel=details'])(
     'handles invalid details %s without an empty panel',
     async (url) => {
         const { fetcher } = app(url)
-        expect(await screen.findByText('This place link is invalid.')).toBeInTheDocument()
+        expect((await screen.findAllByText('This place link is invalid.')).length).toBeGreaterThan(
+            0,
+        )
         expect(
             fetcher.mock.calls.some(
                 ([path]) =>

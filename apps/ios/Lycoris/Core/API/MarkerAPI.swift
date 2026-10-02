@@ -21,14 +21,26 @@ struct Marker: Codable, Equatable, Sendable {
   /// Server-owned IANA opening-hours time zone. Read-only: never inferred from
   /// the device and never written back by the app.
   var hoursTimezone: String? = nil
+  var categories: [PlaceCategory]? = nil
+  var openingHoursNote: String? = nil
+  var photos: [MarkerPhoto]? = nil
+  var facilityCategories: [PlaceCategory] {
+    categories.flatMap { $0.isEmpty ? nil : $0 } ?? [category]
+  }
 
   var point: GeoPoint? { GeoPoint(latitude: lat, longitude: lng) }
   /// Only an accessible toilet may show or speak a venue tag. A stale or
   /// malformed venue on another category is ignored rather than displayed.
   var venue: PlaceVenue? {
-    guard category == .toilet else { return nil }
+    guard facilityCategories.contains(.toilet) else { return nil }
     return venueType.flatMap(PlaceVenue.init(rawValue:))
   }
+}
+
+struct MarkerPhoto: Codable, Equatable, Sendable {
+  let id: Int64
+  let url: String
+  let sortOrder: Int64
 }
 
 enum PlaceCategory: String, Codable, CaseIterable, Sendable {
@@ -84,13 +96,36 @@ enum MarkerQuery: Equatable, Sendable {
 }
 
 enum PlaceFailure: Error, Equatable {
-  case unconfigured, unavailable, invalidResponse, requestFailed
+  case unconfigured, unavailable, invalidResponse, requestFailed, network, timeout, unauthenticated,
+    forbidden, rateLimited, server
+
+  static func http(_ status: Int) -> PlaceFailure {
+    switch status {
+    case 0: .network
+    case -1: .unconfigured
+    case 401: .unauthenticated
+    case 403: .forbidden
+    case 404: .unavailable
+    case 408, 504: .timeout
+    case 429: .rateLimited
+    case 500...599: .server
+    default: .requestFailed
+    }
+  }
 
   var message: String {
     switch self {
     case .unconfigured: String(appLocalized: "The map service is not configured yet.")
     case .unavailable: String(appLocalized: "This place is no longer available.")
-    case .invalidResponse, .requestFailed:
+    case .network: String(appLocalized: "Network unavailable. Check your connection and try again.")
+    case .timeout: String(appLocalized: "Loading places timed out. Try again.")
+    case .unauthenticated: String(appLocalized: "Your session expired. Please log in again.")
+    case .forbidden: String(appLocalized: "You do not have permission to view these places.")
+    case .rateLimited: String(appLocalized: "Too many requests. Please wait before trying again.")
+    case .server:
+      String(appLocalized: "The place service is temporarily unavailable. Try again later.")
+    case .invalidResponse: String(appLocalized: "The place data could not be read. Try again.")
+    case .requestFailed:
       String(appLocalized: "Could not load places. Please try again.")
     }
   }
@@ -188,7 +223,12 @@ struct MarkerAPI: MarkerServing {
   }
 
   private func read<Value: Decodable>(_ request: URLRequest) async throws -> Value {
-    let (data, response) = try await session.data(for: request)
+    let data: Data
+    let response: URLResponse
+    do { (data, response) = try await session.data(for: request) } catch let error as URLError {
+      if error.code == .cancelled { throw CancellationError() }
+      throw error.code == .timedOut ? PlaceFailure.timeout : PlaceFailure.network
+    }
     try Task.checkCancellation()
     guard let response = response as? HTTPURLResponse else { throw PlaceFailure.invalidResponse }
     func failure(_ reason: PlaceFailure) -> MarkerRequestFailure {
@@ -196,8 +236,9 @@ struct MarkerAPI: MarkerServing {
         failure: reason, status: response.statusCode,
         requestID: response.value(forHTTPHeaderField: "X-Request-ID"))
     }
-    if response.statusCode == 404 { throw failure(.unavailable) }
-    guard (200..<300).contains(response.statusCode) else { throw failure(.requestFailed) }
+    guard (200..<300).contains(response.statusCode) else {
+      throw failure(.http(response.statusCode))
+    }
     do { return try JSONDecoder().decode(Value.self, from: data) } catch {
       throw failure(.invalidResponse)
     }

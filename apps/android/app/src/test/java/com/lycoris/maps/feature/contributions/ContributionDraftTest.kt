@@ -10,6 +10,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ContributionDraftTest {
+    @Test fun englishClientAndRestoredEnglishDraftSubmitChineseContent() {
+        val draft = ContributionDraft(UUID.randomUUID().toString(), "a", "https://example.test/", 31.2, 121.5,
+            ContributionFields(title = "中文点位", language = "en"))
+        assertEquals("zh", LycorisJson.decodeFromString<CreateMarkerRequest>(draft.frozenBody()).language)
+        val marker = Marker(17, 31.2, 121.5, "accessible_toilet", "原文")
+        assertEquals("zh", LycorisJson.decodeFromString<EditMarkerRequest>(draft.copy(original = marker).frozenBody()).language)
+    }
+
     @Test fun venueSurvivesEditAndDraftRestoreAndCategoryChangesClearIt() {
         val marker = Marker(17, 31.2, 121.5, "accessible_toilet", "Place", venueType = "metro", hoursTimezone = "Asia/Shanghai")
         val draft = ContributionDraft(UUID.randomUUID().toString(), "a", "https://example.test/", marker.lat, marker.lng,
@@ -35,7 +43,7 @@ class ContributionDraftTest {
     }
 
     @Test fun newVenueTypesSurviveCreateEditAndDraftPersistence() {
-        for (venue in listOf("public_toilet", "airport")) {
+        for (venue in listOf("public_toilet", "airport", "park")) {
             val marker = Marker(17, 31.2, 121.5, "accessible_toilet", "Place", venueType = venue)
             val draft = ContributionDraft(UUID.randomUUID().toString(), "a", "https://example.test/", marker.lat, marker.lng,
                 ContributionFields.fromMarker(marker), original = marker)
@@ -44,6 +52,20 @@ class ContributionDraftTest {
             assertEquals(venue, LycorisJson.decodeFromString<EditMarkerRequest>(restored.copy(fields = restored.fields.copy(title = "Updated")).frozenBody()).venueType)
             assertEquals(venue, LycorisJson.decodeFromString<CreateMarkerRequest>(restored.copy(original = null).frozenBody()).venueType)
         }
+    }
+
+    @Test fun orderedTypesAndOpeningNoteSurviveDraftAndRequest() {
+        val fields = ContributionFields(title = "Shared facility", venueType = "park", openingHoursNote = "午间休息")
+            .withCategories(listOf("baby_room", "accessible_toilet"))
+        assertTrue(fields.isValid())
+        val draft = ContributionDraft(UUID.randomUUID().toString(), "a", "https://example.test/", 31.2, 121.5, fields)
+        val restored = LycorisJson.decodeFromString<ContributionDraft>(LycorisJson.encodeToString(draft))
+        val body = LycorisJson.decodeFromString<CreateMarkerRequest>(restored.frozenBody())
+        assertEquals("baby_room", body.category)
+        assertEquals(listOf("baby_room", "accessible_toilet"), body.categories)
+        assertEquals("park", body.venueType)
+        assertEquals("午间休息", body.openingHoursNote)
+        assertFalse(fields.copy(openingHoursNote = "字".repeat(1001)).isValid())
     }
 
     @Test fun validationCountsUnicodeScalarsAndRequiresCompleteHours() {

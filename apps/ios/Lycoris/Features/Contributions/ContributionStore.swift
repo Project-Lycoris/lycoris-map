@@ -4,6 +4,7 @@ import Observation
 
 @MainActor @Observable
 final class ContributionStore {
+  private(set) var drafts: [ContributionDraft] = []
   private(set) var draft: ContributionDraft?
   private(set) var isWorking = false
   private(set) var message: String?
@@ -47,11 +48,8 @@ final class ContributionStore {
     }
     boundEpoch = account.epoch
     do {
-      if var saved = try journal.load() {
-        guard saved.owner == owner, saved.origin == origin else {
-          try journal.clear()
-          return
-        }
+      drafts = try journal.list(owner: owner, origin: origin)
+      if var saved = drafts.first {
         if saved.phase == .editing {
           saved.phase = .uncertainEdit
           try journal.save(saved)
@@ -76,13 +74,22 @@ final class ContributionStore {
     guard let account, let owner = account.user?.publicId,
       let origin = account.baseURL?.absoluteString, boundEpoch == account.epoch
     else { throw AccountFailure(status: 401) }
-    if draft?.phase == .complete { try discard() }
-    guard draft == nil else { return }
+    guard !isWorking else { return }
+    if let current = draft {
+      if current.phase == .complete {
+        try journal.remove(current)
+      } else {
+        try journal.save(current)
+      }
+    }
+    draft = nil
+    photoPreview = nil
     var value = ContributionDraft(
-      owner: owner, origin: origin, point: point, language: account.language)
+      owner: owner, origin: origin, point: point, language: "zh")
     value.fields = Self.normalized(value.fields)
     try journal.save(value)
     draft = value
+    refreshDrafts()
     message = nil
   }
 
@@ -91,11 +98,19 @@ final class ContributionStore {
     guard let account, let owner = account.user?.publicId, let token = boundEpoch,
       let origin = account.baseURL?.absoluteString
     else { throw AccountFailure(status: 401) }
-    if draft?.phase == .complete { try discard() }
-    guard draft == nil else { return }
+    guard !isWorking else { return }
+    if let current = draft {
+      if current.phase == .complete {
+        try journal.remove(current)
+      } else {
+        try journal.save(current)
+      }
+    }
+    draft = nil
+    photoPreview = nil
     let generation = self.generation
     let data = try await account.contributionRequest(
-      AccountRequest(path: "api/markers/\(id)", query: ["lang": account.language]), owner: owner,
+      AccountRequest(path: "api/markers/\(id)", query: ["lang": "zh"]), owner: owner,
       token: token, waitForAccount: true)
     let marker = try JSONDecoder().decode(Marker.self, from: data)
     guard generation == self.generation, draft == nil, token == boundEpoch,
@@ -106,9 +121,10 @@ final class ContributionStore {
     }
     let value = ContributionDraft(
       owner: owner, origin: origin, point: point,
-      language: marker.contentLanguage, marker: marker)
+      language: "zh", marker: marker)
     try journal.save(value)
     draft = value
+    refreshDrafts()
     message = nil
   }
 
@@ -131,7 +147,7 @@ final class ContributionStore {
   /// toilet is handled by `switchingCategory`.
   nonisolated static func normalized(_ fields: ContributionFields) -> ContributionFields {
     var value = fields
-    if value.category != .toilet {
+    if !value.selectedCategories.contains(.toilet) {
       value.venueType = nil
       value.unknownVenueType = nil
     }
@@ -144,7 +160,9 @@ final class ContributionStore {
   nonisolated static func switchingCategory(
     _ fields: ContributionFields, from previous: PlaceCategory
   ) -> ContributionFields {
-    var value = normalized(fields)
+    var adjusted = fields
+    adjusted.categories = [fields.category]
+    var value = normalized(adjusted)
     if previous != .toilet, value.category == .toilet,
       value.venueType == nil, value.unknownVenueType == nil
     {
@@ -173,6 +191,92 @@ final class ContributionStore {
     paused = false
     journal.removePhoto(old)
     if value.phase == .uploading { resume() }
+  }
+
+  func addPhoto(_ encoded: Data) throws {
+    guard var value = draft, value.editable, !isWorking else { return }
+    if value.photoID == nil {
+      try choosePhoto(encoded)
+      return
+    }
+    let id = UUID()
+    // Use the same durable ID for bytes and the subsequent upload request.
+    let saved = try journal.savePhoto(encoded, id: id)
+    value.queuedPhotos =
+      (value.queuedPhotos ?? []) + [
+        QueuedContributionPhoto(id: id, hash: saved.hash, size: saved.size)
+      ]
+    do { try checkpoint(value) } catch {
+      journal.removePhoto(id)
+      throw error
+    }
+  }
+
+  func removeQueuedPhoto(_ id: UUID) throws {
+    guard var value = draft, value.editable, !isWorking else { return }
+    if id == value.photoID {
+      if let next = value.queuedPhotos?.first {
+        value.queuedPhotos?.removeFirst()
+        value.photoID = next.id
+        value.photoHash = next.hash
+        value.photoSize = next.size
+        value.upload = nil
+        try checkpoint(value)
+        journal.removePhoto(id)
+        photoPreview = try? journal.photo(value)
+      } else {
+        try removePhoto()
+      }
+    } else {
+      value.queuedPhotos?.removeAll { $0.id == id }
+      try checkpoint(value)
+      journal.removePhoto(id)
+    }
+  }
+
+  func refreshDrafts() {
+    guard let owner = account?.user?.publicId, let origin = account?.baseURL?.absoluteString else {
+      drafts = []
+      return
+    }
+    do { drafts = try journal.list(owner: owner, origin: origin) } catch {
+      message = String(appLocalized: "Could not read the saved contribution.")
+    }
+  }
+  func openDraft(_ id: UUID) throws {
+    guard !isWorking, let owner = account?.user?.publicId,
+      let origin = account?.baseURL?.absoluteString
+    else { return }
+    let values = try journal.list(owner: owner, origin: origin)
+    guard var value = values.first(where: { $0.id == id }) else { return }
+    stop()
+    if value.phase == .editing {
+      value.phase = .uncertainEdit
+      try journal.save(value)
+    }
+    draft = value
+    photoPreview = try? journal.photo(value)
+    message = nil
+    paused = false
+    resume()
+  }
+  func modifiedAt(_ id: UUID) -> Date? { journal.modifiedAt(id) }
+  func deleteDraft(_ id: UUID) throws {
+    guard !isWorking, let value = drafts.first(where: { $0.id == id }) else { return }
+    if draft?.id == id {
+      try discard()
+    } else {
+      try journal.remove(value)
+      refreshDrafts()
+    }
+  }
+  func leaveDraft() throws {
+    guard !isWorking else { return }
+    if let draft { try journal.save(draft) }
+    stop()
+    draft = nil
+    photoPreview = nil
+    refreshDrafts()
   }
 
   func move(to point: GeoPoint) throws {
@@ -219,12 +323,13 @@ final class ContributionStore {
 
   func discard() throws {
     stop()
-    try journal.clear()
+    if let draft { try journal.remove(draft) }
     draft = nil
     photoPreview = nil
     message = nil
     paused = false
     attempts = 0
+    refreshDrafts()
   }
 
   func setActive(_ active: Bool) {
@@ -248,9 +353,7 @@ final class ContributionStore {
     photoPreview = nil
     message = nil
     paused = false
-    do { try journal.clear() } catch {
-      message = String(appLocalized: "Could not clear the saved contribution.")
-    }
+    drafts = []
   }
 
   private func stop() {
@@ -316,6 +419,7 @@ final class ContributionStore {
   private func checkpoint(_ value: ContributionDraft) throws {
     try journal.save(value)
     draft = value
+    refreshDrafts()
   }
 
   private func run(_ token: UUID) async throws {
@@ -352,7 +456,7 @@ final class ContributionStore {
       value.phase = value.photoID == nil ? .complete : .uploading
       try checkpoint(value)
     }
-    if value.phase == .uploading {
+    while value.phase == .uploading {
       let path = "api/markers/\(value.markerID!)/image-uploads"
       let data: Data
       if let receipt = value.upload {
@@ -398,12 +502,25 @@ final class ContributionStore {
         value.upload = receipt
         try checkpoint(value)
       }
-      value.phase = .complete
-      try checkpoint(value)
+      let completedID = value.photoID
+      if let next = value.queuedPhotos?.first {
+        value.queuedPhotos?.removeFirst()
+        value.photoID = next.id
+        value.photoHash = next.hash
+        value.photoSize = next.size
+        value.upload = nil
+        value.uploadedPhotoCount = (value.uploadedPhotoCount ?? 0) + 1
+        try checkpoint(value)
+        journal.removePhoto(completedID)
+      } else {
+        value.phase = .complete
+        try checkpoint(value)
+      }
     }
     if value.phase == .complete {
       account?.reloadLibrary()
-      journal.removePhoto(value.photoID)
+      try journal.remove(value)
+      refreshDrafts()
       photoPreview = nil
     }
   }

@@ -26,7 +26,7 @@ struct PlaceResultsView: View {
       }
       PlaceLoadStatus(
         state: store.resultsState, empty: store.results.isEmpty, retry: store.retryResults)
-      if store.resultsState == .loaded {
+      if !store.resultPlaces.isEmpty {
         LazyVStack(spacing: 0) {
           ForEach(store.resultPlaces) { place in
             PlaceRow(place: place) { onSelect(place) }

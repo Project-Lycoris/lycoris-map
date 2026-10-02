@@ -202,6 +202,7 @@ class Handler(BaseHTTPRequestHandler):
                 marker = dict(MARKERS[0])
                 marker.update({
                     "id": STATE.next_id, "title": fields.get("title", ""),
+                    "lat": fields.get("lat"), "lng": fields.get("lng"),
                     "category": fields.get("category", "accessible_toilet"),
                     "reviewStatus": "PENDING",
                 })

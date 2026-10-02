@@ -38,6 +38,8 @@ export const editSchema = z.object({
     lat: z.number(),
     lng: z.number(),
     category: markerCategorySchema,
+    categories: z.array(markerCategorySchema).optional(),
+    openingHoursNote: z.string().nullable().optional(),
     venueType: venueTypeReadSchema,
     title: z.string(),
     description: z.string().nullable(),

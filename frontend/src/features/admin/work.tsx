@@ -10,12 +10,13 @@ type Confirmation = {
     label: string
     detail: string
     action: (signal: AbortSignal) => Promise<unknown>
+    onSuccess?: () => void
 }
 type Work = Pick<Admin, 'run' | 'prefix' | 'session'> & {
     busy: boolean
     confirm: (value: Confirmation) => void
     clearConfirmation: () => void
-    mutate: (action: Confirmation['action']) => Promise<boolean>
+    mutate: (action: Confirmation['action'], onSuccess?: () => void) => Promise<boolean>
 }
 const Context = createContext<Work | null>(null)
 export function useAdminWork() {
@@ -27,7 +28,8 @@ export function AdminWork({ admin, children }: { admin: Admin; children: ReactNo
     const ui = useAdminUi(),
         client = useQueryClient(),
         [busy, setBusy] = useState(false),
-        running = useRef(false)
+        running = useRef(false),
+        mutationRound = useRef(0)
     const [confirmation, setConfirmation] = useState<Confirmation | null>(null),
         [message, setMessage] = useState('')
     const trigger = useRef<HTMLElement | null>(null)
@@ -50,10 +52,11 @@ export function AdminWork({ admin, children }: { admin: Admin; children: ReactNo
         window.addEventListener('keydown', escape)
         return () => window.removeEventListener('keydown', escape)
     }, [confirmation])
-    const mutate: Work['mutate'] = async (action) => {
+    const mutate: Work['mutate'] = async (action, onSuccess) => {
         if (running.current || admin.session.busy) return false
         const scope = admin.session.scope!,
             store = admin.session.store!
+        const round = ++mutationRound.current
         running.current = true
         setBusy(true)
         setMessage('')
@@ -62,7 +65,10 @@ export function AdminWork({ admin, children }: { admin: Admin; children: ReactNo
         try {
             await admin.run(action)
             success = true
-            if (store.isCurrent(scope)) setMessage('Completed.')
+            if (store.isCurrent(scope)) {
+                onSuccess?.()
+                setMessage('Completed.')
+            }
         } catch (error) {
             if (
                 store.isCurrent(scope) &&
@@ -76,30 +82,42 @@ export function AdminWork({ admin, children }: { admin: Admin; children: ReactNo
                           : 'The request failed. Refresh and try again.',
                 )
         } finally {
-            try {
-                if (store.isCurrent(scope)) {
-                    // Refresh business data, not the dashboard's access gate. Each
-                    // API request still checks the current role on the server.
-                    // Never replay a write whose response may have been lost.
-                    await Promise.all([
-                        client.invalidateQueries({
-                            queryKey: privateKeys.scope(scope),
-                            predicate: (query) => query.queryKey.at(-1) !== 'access',
-                        }),
-                        client.invalidateQueries({ queryKey: publicKeys.markers() }),
-                    ])
-                }
-            } catch {
-                if (success && store.isCurrent(scope))
-                    setMessage(
-                        'Saved, but the list could not refresh. Refresh before reviewing another item.',
-                    )
-            } finally {
-                running.current = false
-                if (store.isCurrent(scope)) {
-                    setBusy(false)
-                    restore()
-                }
+            // A completed write must not stay busy behind paused/offline reads.
+            // Refresh only the active admin data; map/account caches become stale
+            // without flooding the session queue with unrelated requests.
+            running.current = false
+            if (store.isCurrent(scope)) {
+                setBusy(false)
+                restore()
+                void Promise.all([
+                    client.invalidateQueries(
+                        {
+                            queryKey: admin.prefix,
+                            predicate: (query) =>
+                                query.queryKey.at(-1) !== 'access' &&
+                                (!success || !query.queryKey.includes('current')),
+                        },
+                        { throwOnError: true },
+                    ),
+                    client.invalidateQueries({
+                        queryKey: [...admin.prefix, 'current'],
+                        refetchType: 'none',
+                    }),
+                    client.invalidateQueries({
+                        queryKey: privateKeys.scope(scope),
+                        predicate: (query) => !query.queryKey.includes('admin'),
+                        refetchType: 'none',
+                    }),
+                    client.invalidateQueries({
+                        queryKey: publicKeys.markers(),
+                        refetchType: 'none',
+                    }),
+                ]).catch(() => {
+                    if (success && store.isCurrent(scope) && mutationRound.current === round)
+                        setMessage(
+                            'Saved, but the list could not refresh. Refresh before reviewing another item.',
+                        )
+                })
             }
         }
 
@@ -132,7 +150,9 @@ export function AdminWork({ admin, children }: { admin: Admin; children: ReactNo
                     <h2 id="admin-confirm-title">{confirmation.label}</h2>
                     <p id="admin-confirm-detail">{confirmation.detail}</p>
                     <div className="admin-actions">
-                        <DesignButton onClick={() => void mutate(confirmation.action)}>
+                        <DesignButton
+                            onClick={() => void mutate(confirmation.action, confirmation.onSuccess)}
+                        >
                             {ui.message('Confirm')}
                         </DesignButton>
                         <DesignButton

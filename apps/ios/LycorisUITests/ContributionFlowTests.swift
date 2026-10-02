@@ -24,75 +24,37 @@ import XCTest
     fill(app.secureTextFields["auth.password"], fixture.password)
     app.secureTextFields["auth.password"].typeText("\n")
     declinePasswordSave(app)
-    let useLocation = app.buttons["contribution.confirm-location"]
+    let hint = app.staticTexts["contribution.pick-location"]
     let chooseLocation = app.buttons["contribution.location"]
-    let defaultPoint = try await enterMapLocationSelection(app)
+    XCTAssertTrue(hint.waitForExistence(timeout: 10))
+    XCTAssertFalse(app.textFields["contribution.title"].exists)
     let first = app.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.35))
     let second = app.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5))
     first.press(forDuration: 0.05, thenDragTo: second)
-    XCTAssertEqual(
-      useLocation.value as? String, defaultPoint ?? "",
-      "Panning must preserve the GPS pin or leave an unselected map empty")
-    XCTAssertEqual(useLocation.isEnabled, defaultPoint != nil)
-    first.tap()
-    await assertReady(useLocation)
-    let initialPoint = try XCTUnwrap(useLocation.value as? String)
-    first.press(forDuration: 0.05, thenDragTo: second)
-    XCTAssertEqual(useLocation.value as? String, initialPoint, "Pan must preserve the pin")
-    second.doubleTap()
-    XCTAssertEqual(useLocation.value as? String, initialPoint, "Double tap only zooms")
-    app.maps.firstMatch.pinch(withScale: 1.5, velocity: 1)
-    XCTAssertEqual(useLocation.value as? String, initialPoint, "Pinch only zooms")
-    second.tap()
-    await assertCoordinateChanges(useLocation, from: initialPoint)
-    attach(app, "i5-map-selection")
-    // Cancel preserves a GPS-created draft, or leaves no draft when the GPS
-    // request failed and the user has not confirmed a manual location yet.
+    XCTAssertTrue(hint.exists, "Panning must not create a draft")
     app.buttons["contribution.cancel-location"].tap()
-    if let defaultPoint {
-      XCTAssertTrue(chooseLocation.waitForExistence(timeout: 5))
-      XCTAssertEqual(chooseLocation.value as? String, defaultPoint)
-      XCTAssertTrue(app.textFields["contribution.title"].exists)
-      app.buttons["contribution.close"].tap()
-    } else {
-      XCTAssertFalse(app.textFields["contribution.title"].exists)
-    }
+    XCTAssertFalse(app.textFields["contribution.title"].exists)
     await assertReady(app.buttons["map.contribute"])
     app.buttons["map.contribute"].tap()
-    let reopenedDefault = try await enterMapLocationSelection(app)
-    if let defaultPoint {
-      XCTAssertEqual(reopenedDefault, defaultPoint, "Reopening must preserve the saved GPS draft")
-    }
+    XCTAssertTrue(hint.waitForExistence(timeout: 8))
     first.tap()
-    await assertReady(useLocation)
-    let confirmedPoint = try XCTUnwrap(useLocation.value as? String)
-    useLocation.tap()
-    guard app.textFields["contribution.title"].waitForExistence(timeout: 5) else {
-      XCTFail("Native contribution form missing")
-      return
-    }
+    XCTAssertTrue(app.textFields["contribution.title"].waitForExistence(timeout: 8))
+    let confirmedPoint = try XCTUnwrap(chooseLocation.value as? String)
     let title = "I5 Native \(UUID().uuidString.prefix(8))"
     fill(app.textFields["contribution.title"], title)
     app.textFields["contribution.title"].typeText("\n")
-    XCTAssertEqual(chooseLocation.value as? String, confirmedPoint)
     chooseLocation.tap()
-    await assertReady(useLocation)
-    XCTAssertEqual(useLocation.value as? String, confirmedPoint)
-    second.tap()
-    await assertCoordinateChanges(useLocation, from: confirmedPoint)
+    XCTAssertTrue(hint.waitForExistence(timeout: 8))
     app.buttons["contribution.cancel-location"].tap()
-    XCTAssertTrue(chooseLocation.waitForExistence(timeout: 5))
-    XCTAssertEqual(
-      chooseLocation.value as? String, confirmedPoint, "Cancel preserves saved location")
+    XCTAssertTrue(chooseLocation.waitForExistence(timeout: 8))
+    XCTAssertEqual(chooseLocation.value as? String, confirmedPoint)
     XCTAssertEqual(app.textFields["contribution.title"].value as? String, title)
     chooseLocation.tap()
-    await assertReady(useLocation)
+    XCTAssertTrue(hint.waitForExistence(timeout: 8))
     second.tap()
-    await assertCoordinateChanges(useLocation, from: confirmedPoint)
-    let updatedPoint = try XCTUnwrap(useLocation.value as? String)
-    useLocation.tap()
-    XCTAssertTrue(chooseLocation.waitForExistence(timeout: 5))
-    XCTAssertEqual(chooseLocation.value as? String, updatedPoint)
+    XCTAssertTrue(chooseLocation.waitForExistence(timeout: 8))
+    let updatedPoint = try XCTUnwrap(chooseLocation.value as? String)
+    XCTAssertNotEqual(updatedPoint, confirmedPoint)
     XCTAssertEqual(app.textFields["contribution.title"].value as? String, title)
     let picker = app.buttons["contribution.photo"]
     for _ in 0..<6 {
@@ -190,37 +152,6 @@ import XCTest
     XCTAssertEqual(
       after?["title"] as? String, title, "Unapproved edits must not change live details")
     app.buttons["contribution.close"].tap()
-  }
-
-  /// Wait for GPS to create a draft, or for an unavailable fix to fall back
-  /// to explicit map selection. The waiting form also has a change-location
-  /// button, so require the title field before treating it as a saved draft.
-  private func enterMapLocationSelection(_ app: XCUIApplication) async throws -> String? {
-    let chooseLocation = app.buttons["contribution.location"]
-    let useLocation = app.buttons["contribution.confirm-location"]
-    let title = app.textFields["contribution.title"]
-    let resolved = XCTNSPredicateExpectation(
-      predicate: NSPredicate { _, _ in
-        useLocation.exists || (title.exists && chooseLocation.exists)
-      }, object: app)
-    guard await XCTWaiter.fulfillment(of: [resolved], timeout: 25) == .completed else {
-      attach(app, "i5-contribution-location-entry-failure")
-      XCTFail("Contribution must open a GPS draft or fall back to manual location selection")
-      throw URLError(.timedOut)
-    }
-    if title.exists {
-      let savedPoint = try XCTUnwrap(chooseLocation.value as? String)
-      XCTAssertFalse(savedPoint.isEmpty, "A GPS-created draft must contain a real coordinate")
-      await assertReady(chooseLocation)
-      chooseLocation.tap()
-      XCTAssertTrue(useLocation.waitForExistence(timeout: 5))
-      XCTAssertTrue(useLocation.isEnabled)
-      XCTAssertEqual(useLocation.value as? String, savedPoint)
-      return savedPoint
-    }
-    XCTAssertFalse(useLocation.isEnabled, "The map center must not silently become the location")
-    XCTAssertEqual(useLocation.value as? String, "")
-    return nil
   }
 
   private func launch() -> XCUIApplication {

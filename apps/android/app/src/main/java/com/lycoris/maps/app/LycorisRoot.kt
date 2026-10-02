@@ -67,7 +67,15 @@ fun LycorisRoot(model: HomeViewModel) {
         previousPage = page
     }
     LaunchedEffect(page) { devices.cancelVoice() }
-    LaunchedEffect(viewport.failure) { viewport.failure?.let { model.backgroundMessage(it.displayMessage(preferences.language)) } }
+    LaunchedEffect(page, viewport.failure, detail.failure, search.failure, nearby.failure, preferences.language) {
+        val failure = when (page) {
+            SecondaryPage.DETAIL -> detail.failure
+            SecondaryPage.NEARBY -> nearby.failure
+            SecondaryPage.SEARCH -> search.failure
+            else -> null
+        } ?: viewport.failure
+        model.backgroundMessage(failure?.displayMessage(preferences.language))
+    }
     LaunchedEffect(detail.place?.id, page, map.ready) {
         if (page != SecondaryPage.DETAIL) {
             centeredDetailId = null
@@ -104,7 +112,7 @@ fun LycorisRoot(model: HomeViewModel) {
         mapSource = if (preferences.initialized) renderSource else MapSource.OSM,
         searchType = preferences.searchType,
         secondaryTitle = title, secondaryKey = page?.let { if (it == SecondaryPage.DETAIL) "detail:${detail.id}" else if (it == SecondaryPage.ACCOUNT) "account:$accountPage" else it.name }, onCloseSecondary = model::closeSecondary, onBackSecondary = ::close,
-        notice = if (picking) { if (zh) "点击地图选择点位位置。" else "Tap the map to choose a place." } else notice,
+        notice = if (picking) { if (zh) "正在标注模式，请在地图上点击位置。" else "Tap the map to choose a place." } else notice,
         onDismissNotice = { if (picking) model.cancelPicking() else model.message(null) },
         onAttribution = {
             val url = if (renderSource == MapSource.TIANDITU) "https://www.tianditu.gov.cn/" else "https://www.openstreetmap.org/copyright"
@@ -164,7 +172,17 @@ fun LycorisRoot(model: HomeViewModel) {
                     } else AccountPanel(model.accounts, model.container.clients, preferences.language, accountPage, { accountPage = it }, model::signedIn, model::closeSecondary, model::myPlaces)
                 }
                 SecondaryPage.CREATED -> {
-                    items(drafts, key = { "draft:${it.id}" }, contentType = { "draft" }) { draft -> TextButton({ model.openDraft(draft.id) }, Modifier.fillMaxWidth().padding(horizontal = 30.dp)) { Text(draft.fields.title.ifBlank { if (zh) "未完成的草稿" else "Unfinished draft" }) } }
+                    item(key = "drafts-heading") { Text(if (zh) "草稿箱 · 仅保存在本机" else "Drafts · On this device", Modifier.padding(horizontal = 30.dp)) }
+                    items(drafts.filter { it.phase != com.lycoris.maps.feature.contributions.DraftPhase.COMPLETE }, key = { "draft:${it.id}" }, contentType = { "draft" }) { draft ->
+                        TextButton({ model.openDraft(draft.id) }, Modifier.fillMaxWidth().padding(horizontal = 30.dp)) {
+                            Column(Modifier.fillMaxWidth()) {
+                                Text(draft.fields.title.ifBlank { if (zh) "未完成的草稿" else "Unfinished draft" })
+                                Text(java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT,
+                                    java.text.DateFormat.SHORT, if (zh) java.util.Locale.SIMPLIFIED_CHINESE else java.util.Locale.ENGLISH)
+                                    .format(java.util.Date(draft.updatedAt)), style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
                     placeItems(PlaceListState(account.createdPlaces, preferences.language, account.createdLoading, account.failure, account.initialized), model.container.clients, account, zh, model::detail, model::myPlaces)
                 }
                 SecondaryPage.CONTRIBUTION -> item(key = "contribution-content", contentType = "form") { ContributionPanel(drafts.firstOrNull { it.id == draftId }, preferences.language, model::draftCommand, model.container.contributions) }

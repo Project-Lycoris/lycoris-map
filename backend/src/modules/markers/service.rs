@@ -268,6 +268,42 @@ impl MarkerService {
         rows.pop().ok_or(ApiError::Internal)
     }
 
+    /// A committed mutation cannot become a failed write because an optional
+    /// translation read failed. Return the saved source as the bounded fallback.
+    pub async fn committed_row(&self, row: MarkerRow, lang: &'static str) -> MarkerDto {
+        {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                self.localize_row(row.clone(), lang),
+            )
+            .await
+            {
+                Ok(Ok(dto)) => return dto,
+                _ => tracing::warn!("Saved marker response fell back to source text"),
+            }
+        }
+        let language = super::localization::normalize(Some(&row.source_language));
+        let category = normalize_category_read(&row.category);
+        let is_active = compute_is_active(
+            row.open_time_start.as_deref(),
+            row.open_time_end.as_deref(),
+            row.is_active,
+            self.zone,
+            Utc::now(),
+        );
+        let title = row.title.clone();
+        let description = row.description.clone();
+        MarkerDto::from_row(
+            row,
+            category,
+            title,
+            description,
+            language,
+            is_active,
+            self.zone.name(),
+        )
+    }
+
     /// 批量本地化：一次加载所有译文，避免 N+1。
     async fn localize_rows(
         &self,
@@ -277,18 +313,30 @@ impl MarkerService {
         if rows.is_empty() {
             return Ok(Vec::new());
         }
-        let ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
-        let translations = self
-            .repo
-            .load_translations(&ids, lang)
-            .await
-            .map_err(db_error)?;
+        let ids: Vec<i64> = rows
+            .iter()
+            .filter(|row| super::localization::normalize(Some(&row.source_language)) != lang)
+            .map(|row| row.id)
+            .collect();
+        let translations = if ids.is_empty() {
+            Vec::new()
+        } else {
+            self.repo
+                .load_translations(&ids, lang)
+                .await
+                .map_err(db_error)?
+        };
         let mut by_marker: HashMap<i64, TranslationRow> =
             HashMap::with_capacity(translations.len());
         for translation in translations {
             by_marker.insert(translation.marker_id, translation);
         }
 
+        let all_ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
+        let mut photos: HashMap<i64, Vec<super::model::MarkerPhoto>> = HashMap::new();
+        for photo in self.repo.load_photos(&all_ids).await.map_err(db_error)? {
+            photos.entry(photo.marker_id).or_default().push(photo);
+        }
         let now = Utc::now();
         Ok(rows
             .into_iter()
@@ -303,7 +351,8 @@ impl MarkerService {
                     self.zone,
                     now,
                 );
-                MarkerDto::from_row(
+                let album = photos.remove(&row.id).unwrap_or_default();
+                let mut dto = MarkerDto::from_row(
                     row,
                     category,
                     title,
@@ -311,7 +360,9 @@ impl MarkerService {
                     content_language,
                     is_active,
                     self.zone.name(),
-                )
+                );
+                dto.photos = album;
+                dto
             })
             .collect())
     }

@@ -46,6 +46,27 @@ class ContributionEngineTest {
     }
     private fun scenario(block: suspend Fixture.() -> Unit) = runBlocking { Fixture().use { it.block() } }
 
+    @Test fun uploadsAnOrderedQueueAndPreservesTheCompletedPhotoOnSecondFailure() = scenario {
+        val initial = uploading(21)
+        val secondId = UUID.randomUUID().toString()
+        val secondFile = File(files.directory, "$secondId.jpg").apply { writeBytes(ByteArray(19) { 2 }) }
+        val second = EncodedPhoto(secondId, secondFile.name, 19, PhotoFiles.hash(secondFile), 320, 200)
+        store.update(initial, initial.copy(queuedPhotos = listOf(second)))
+        remote.beforeBegin = {
+            if (remote.begins == 2) throw ApiFailure.Network(false)
+            if (remote.begins > 2) remote.receipt = UploadReceipt(UUID.randomUUID().toString(), 17, 19, 0, PhotoPolicy.UPLOAD_CHUNK_BYTES, "UPLOADING")
+        }
+        assertEquals(ContributionRunResult.RETRY, engine.resume(initial.id))
+        val paused = store.get(initial.id)!!
+        assertEquals(secondId, paused.photo!!.id)
+        assertEquals(1, paused.uploadedPhotoCount)
+        assertTrue(paused.queuedPhotos.isEmpty())
+        assertEquals(ContributionRunResult.DONE, engine.resume(initial.id))
+        assertEquals(2, remote.completions)
+        assertEquals(0, remote.creates.size)
+        assertEquals(DraftPhase.COMPLETE, store.get(initial.id)!!.phase)
+    }
+
     @Test fun creationResponseLostReplaysExactBytesAndKeepsSameKey() = scenario {
         val d = freeze()
         remote.createFailure = ApiFailure.Network(true)

@@ -4,6 +4,58 @@ import Testing
 @testable import Lycoris
 
 @MainActor struct ContributionTests {
+  @Test func englishClientAndRestoredEnglishDraftSubmitChineseContent() throws {
+    var draft = ContributionDraft(
+      owner: "synthetic", origin: "https://example.test",
+      point: GeoPoint(latitude: 31.2, longitude: 121.5)!, language: "en")
+    #expect(draft.fields.language == "zh")
+    draft.fields.language = "en"  // A journal created before the language policy changed.
+    draft.fields.title = "中文点位"
+    let body = try #require(
+      JSONSerialization.jsonObject(with: draft.encodedRequest()) as? [String: Any])
+    #expect(body["language"] as? String == "zh")
+  }
+
+  @Test func multiplePhotosKeepOrderAndResumeWithoutRepeatingCreation() async throws {
+    let api = ContributionFixture()
+    let (_, store, journal) = await setup(api)
+    defer {
+      store.setActive(false)
+      try? journal.clear()
+    }
+    try fill(store)
+    try store.addPhoto(Data(repeating: 1, count: 12))
+    try store.addPhoto(Data(repeating: 2, count: 19))
+    let ids = try #require(store.draft).remainingPhotos.map { $0.id.uuidString }
+    #expect(ids.count == 2)
+    await api.lose("complete")
+    store.submit()
+    try await settle { store.message != nil }
+    store.setActive(false)
+    let (_, resumed, _) = await setup(api, journal: journal)
+    defer { resumed.setActive(false) }
+    try await settle { resumed.draft?.phase == .complete }
+    #expect(await api.creates == 1)
+    #expect(await api.completions == 2)
+    #expect(await api.photoRequests == ids)
+    #expect(resumed.drafts.isEmpty)
+  }
+
+  @Test func keepsSeveralDraftsAndDeletingOnePreservesAnother() async throws {
+    let api = ContributionFixture()
+    let (_, store, journal) = await setup(api)
+    defer { try? journal.clear() }
+    try fill(store)
+    let first = try #require(store.draft?.id)
+    try store.begin(at: GeoPoint(latitude: 32, longitude: 120)!)
+    let second = try #require(store.draft?.id)
+    #expect(first != second && store.drafts.count == 2)
+    try store.openDraft(first)
+    #expect(store.draft?.fields.title == "I5 fixture")
+    try store.deleteDraft(first)
+    #expect(store.drafts.map(\.id) == [second])
+  }
+
   private func setup(_ api: ContributionFixture, journal: ContributionJournal? = nil) async -> (
     AccountStore, ContributionStore, ContributionJournal
   ) {
@@ -302,7 +354,7 @@ import Testing
     #expect(await api.creates == 0)
   }
 
-  @Test func logoutPurgesJournalAndSwitchCannotSubmitOldWork() async throws {
+  @Test func logoutHidesJournalAndSwitchCannotSubmitOldWork() async throws {
     let api = ContributionFixture()
     await api.lose("chunk")
     let (account, store, journal) = await setup(api)
@@ -314,7 +366,7 @@ import Testing
     let writes = await api.chunkOffsets.count
     await account.logout()
     #expect(store.draft == nil && store.photoPreview == nil)
-    #expect(try journal.load() == nil)
+    #expect(try journal.load() != nil)
     await api.switchOwner("b")
     await account.restore()
     store.synchronize()
@@ -333,7 +385,7 @@ import Testing
     await api.switchOwner("b")
     let (_, other, _) = await setup(api, journal: journal)
     #expect(other.draft == nil)
-    #expect(try journal.load() == nil)
+    #expect(try journal.load() != nil)
     #expect(await api.creates == 0)
   }
 
@@ -398,7 +450,9 @@ private actor ContributionFixture: AccountServing {
   private var detailContinuation: CheckedContinuation<Void, Never>?
   var detailHeld: Bool { detailContinuation != nil }
   private var ids = Set<String>()
-  private let uploadID = UUID().uuidString
+  private var uploadID = UUID().uuidString
+  private var photoRequestID: String?
+  var photoRequests: [String] = []
   private var total = 0
   private var completed = false
   var creates = 0
@@ -462,6 +516,14 @@ private actor ContributionFixture: AccountServing {
     }
     if request.path.hasSuffix("image-uploads") {
       let json = try JSONSerialization.jsonObject(with: request.body!) as! [String: Any]
+      let photoID = json["clientRequestId"] as! String
+      if photoID != photoRequestID {
+        photoRequestID = photoID
+        photoRequests.append(photoID)
+        uploadID = UUID().uuidString
+        uploaded = Data()
+        completed = false
+      }
       total = json["totalBytes"] as! Int
     } else if request.path.contains("/chunks/") {
       let offset = Int(request.path.split(separator: "/").last!)!

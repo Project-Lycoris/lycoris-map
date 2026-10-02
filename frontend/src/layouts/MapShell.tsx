@@ -1,3 +1,4 @@
+import { readAccountPlace } from '@/shared/api/privatePlaces'
 import { mapSourceNames } from '@/features/map/mapSources'
 import { usePreferences } from '@/features/preferences/PreferencesProvider'
 import { isSettingsPanel, settingsTitles, SettingsContent } from '@/features/preferences/Settings'
@@ -73,11 +74,23 @@ export function MapShell({
         !!accountFlow &&
         (requestedPanel === 'contribute' || requestedPanel === 'contribute-form') &&
         !session.scope
+    const needsPoint =
+        requestedPanel === 'contribute-form' &&
+        contributor &&
+        contributionState?.phase === 'draft' &&
+        !contributionState.base &&
+        !contributionState.point
     const panel =
         contributionNeedsLogin || (requestedPanel === 'bookmarks' && !showBookmarks)
             ? 'initial'
-            : requestedPanel
-    const contributionOpen = panel === 'contribute-form' || (mobile && panel === 'contribute')
+            : needsPoint
+              ? 'contribute'
+              : requestedPanel
+    const contributionOpen = panel === 'contribute-form'
+    const picking =
+        panel === 'contribute' &&
+        !contributionState?.base &&
+        (!contributionState || contributionState.phase === 'draft')
     const activeRoute = useRef(location.key)
     activeRoute.current = location.key
     const loginRoute = useRef<string | null>(null)
@@ -96,9 +109,6 @@ export function MapShell({
             if (activeRoute.current === key) close()
         })
     }, [contributionNeedsLogin, session.status, session.busy, location.key, accountFlow, close])
-    useEffect(() => {
-        if (mobile && panel === 'contribute') open('contribute-form', 'nav-contribute', true)
-    }, [mobile, panel, open])
     // One visual-viewport snapshot feeds both the CSS shell height and every JS
     // sheet calc, so `100dvh` can never disagree with `innerHeight` again.
     const viewport = useViewportSnapshot()
@@ -131,14 +141,15 @@ export function MapShell({
         mainMenu && !voice ? (menuHeight ?? Infinity) : Infinity,
     )
     const halfSheetHeight = Math.min(mainMenu ? nearbyHeight : 320, fullSheetHeight)
-    const sheetHeight =
-        panel === 'details'
-            ? Math.min(detailHeight, viewportHeight - 46)
-            : snap === 'full'
-              ? fullSheetHeight
-              : snap === 'half'
-                ? halfSheetHeight
-                : Math.min(158, viewportHeight - 46)
+    const sheetHeight = picking
+        ? 0
+        : panel === 'details'
+          ? Math.min(detailHeight, viewportHeight - 46)
+          : snap === 'full'
+            ? fullSheetHeight
+            : snap === 'half'
+              ? halfSheetHeight
+              : Math.min(158, viewportHeight - 46)
     // Top edge of the sheet in the shell's own (layout-origin) coordinates. The
     // shell is anchored at the layout origin and is `bottom` tall, so the sheet
     // top is `viewport.bottom - sheetHeight`; the tool controls are placed at
@@ -168,40 +179,9 @@ export function MapShell({
         )
     }
     const map = useRef<LeafletMap | null>(null)
-    const onMap = useCallback(
-        (value: LeafletMap | null) => {
-            map.current = value
-            if (
-                value &&
-                contributor &&
-                mobile &&
-                contributionOpen &&
-                !contributor.getSnapshot().point
-            )
-                contributor.setPoint(value.getCenter().wrap())
-        },
-        [contributor, mobile, contributionOpen],
-    )
-    useEffect(() => {
-        if (
-            contributor &&
-            mobile &&
-            contributionOpen &&
-            map.current &&
-            contributionState?.phase === 'draft' &&
-            !contributionState.base &&
-            !contributionState.point
-        )
-            contributor.setPoint(map.current.getCenter().wrap())
-    }, [
-        contributor,
-        mobile,
-        contributionOpen,
-        contributionState?.round,
-        contributionState?.phase,
-        contributionState?.base,
-        contributionState?.point,
-    ])
+    const onMap = useCallback((value: LeafletMap | null) => {
+        map.current = value
+    }, [])
     const showMobileSearch = (nextSnap: Snap) => {
         const next = new URLSearchParams(location.search)
         next.set('panel', 'search')
@@ -270,39 +250,58 @@ export function MapShell({
     const [contributionPoint, setContributionPoint] = useState<{ lat: number; lng: number } | null>(
         null,
     )
-    const picking =
-        panel === 'contribute' &&
-        !mobile &&
-        !contributionState?.base &&
-        (!contributionState || contributionState.phase === 'draft')
     const selectPoint = useCallback(
         (point: { lat: number; lng: number } | null) => {
             if (contributor && point) contributor.setPoint(point)
             else setContributionPoint(point)
-            open('contribute-form', 'nav-contribute')
+            open('contribute-form', mobile ? 'mobile-contribute' : 'nav-contribute')
         },
-        [open, contributor],
+        [open, contributor, mobile],
     )
     const startContribution = (phone: boolean) => {
         if (contributor) {
             if (!contributor.beginCreate(browse?.language ?? 'en')) return
-            if (phone && map.current) contributor.setPoint(map.current.getCenter().wrap())
             const current = contributor.getSnapshot()
             open(
-                phone || current.phase !== 'draft' ? 'contribute-form' : 'contribute',
+                current.phase !== 'draft' ? 'contribute-form' : 'contribute',
                 phone ? 'mobile-contribute' : 'nav-contribute',
             )
         } else {
             setContributionPoint(null)
-            open(
-                phone ? 'contribute-form' : 'contribute',
-                phone ? 'mobile-contribute' : 'nav-contribute',
-            )
+            open('contribute', phone ? 'mobile-contribute' : 'nav-contribute')
         }
     }
+    const [editNotice, setEditNotice] = useState<string | null>(null)
+    useEffect(() => setEditNotice(null), [location.key, session.scope])
     const editPlace = () => {
-        if (!contributor || !browse?.detail || !contributor.beginEdit(browse.detail)) return
-        open('contribute-form', mobile ? 'mobile-place-edit' : 'desktop-place-edit')
+        if (!contributor || !browse?.detail) return
+        const marker = browse.detail
+        const openEdit = (source: typeof marker) => {
+            if (contributor.beginEdit(source))
+                open('contribute-form', mobile ? 'mobile-place-edit' : 'desktop-place-edit')
+        }
+        if (marker.contentLanguage === 'zh') {
+            openEdit(marker)
+            return
+        }
+        const route = location.key
+        // Never seed the Chinese contribution form with a translated English view.
+        accountFlow?.requireLogin((scope) => {
+            setEditNotice('Loading places…')
+            void session
+                .store!.runPrivate(scope, (signal) =>
+                    readAccountPlace(String(marker.id), 'zh', signal),
+                )
+                .then((source) => {
+                    if (activeRoute.current !== route) return
+                    setEditNotice(null)
+                    openEdit(source)
+                })
+                .catch(() => {
+                    if (activeRoute.current === route && session.store!.isCurrent(scope))
+                        setEditNotice('This place is unavailable.')
+                })
+        })
     }
     const submitContribution = (resendUnconfirmed = false) => {
         if (!contributor || !accountFlow) return
@@ -329,6 +328,10 @@ export function MapShell({
         close,
         state: contributionState,
         onSubmit: contributor ? submitContribution : undefined,
+        onPhotos: contributor ? (files: File[]) => void contributor.addPhotos(files) : undefined,
+        onRemovePhoto: contributor
+            ? (index: number) => void contributor.removePhoto(index)
+            : undefined,
         onPhoto: contributor
             ? (file: File | null) => {
                   void contributor.photo(file)
@@ -417,8 +420,9 @@ export function MapShell({
                                   position: browse.location.position,
                                   focus: browse.focus,
                                   onView: browse.onView,
-                                  onSelect: selectPlace,
+                                  onSelect: picking ? (place) => selectPoint(place) : selectPlace,
                                   onCluster: (ids) => {
+                                      if (picking) return
                                       browse.showCluster(ids)
                                       if (mobile) showMobileSearch('full')
                                       else open('search', 'nav-search')
@@ -514,7 +518,7 @@ export function MapShell({
                     }
                 />
             )}
-            {mobile && (
+            {mobile && !picking && (
                 <MobileSheet
                     showBookmarks={showBookmarks}
                     snap={snap}
@@ -619,7 +623,15 @@ export function MapShell({
                     />
                 </div>
             )}
+            {picking && (
+                <div className="contribution-bar" role="status">
+                    <FigmaIcon name="info" />
+                    <span>{ui.text('Click on the map to add points.')}</span>
+                    <IconButton icon="close" label="Close contribution mode" onClick={close} />
+                </div>
+            )}
             <div className="map-notices">
+                {editNotice && <MapNotice key={editNotice} message={editNotice} />}
                 {sourceFailure && (
                     <MapNotice
                         key={sourceFailure.id}
@@ -644,11 +656,17 @@ export function MapShell({
                         }
                     />
                 )}
-                {browse?.mode === 'map' && browse.state.error && (
+                {browse && (browse.state.error || browse.detailState.error) && (
                     <MapNotice
-                        key={`places:${browse.state.error}`}
-                        message={browse.state.error}
-                        onRetry={browse.state.retry}
+                        key={`places:${browse.detailState.error || browse.state.error}`}
+                        message={(browse.detailState.error || browse.state.error)!}
+                        onRetry={
+                            browse.detailState.error
+                                ? browse.detailState.retryable === false
+                                    ? undefined
+                                    : browse.detailState.retry
+                                : browse.state.retry
+                        }
                     />
                 )}
             </div>

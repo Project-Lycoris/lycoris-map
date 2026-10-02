@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import type { Marker } from '@/shared/api/markers'
 
-type Hours = Pick<Marker, 'openTimeStart' | 'openTimeEnd' | 'hoursTimezone'>
+type Hours = Pick<Marker, 'openTimeStart' | 'openTimeEnd' | 'hoursTimezone' | 'openingHoursNote'>
 export type OpeningStatus = 'unknown' | 'scheduled' | 'open' | 'closed' | 'closing-soon'
 const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/
 const seconds = (time: string) => Number(time.slice(0, 2)) * 3600 + Number(time.slice(3)) * 60
 
 /** Same daily/overnight and equal-time (24h) semantics as the Rust API. */
 export function openingStatus(place: Hours | null | undefined, now: Date): OpeningStatus {
+    if (place?.openingHoursNote?.trim()) return 'scheduled'
     const start = place?.openTimeStart,
         end = place?.openTimeEnd
     if (!start || !end || !timePattern.test(start) || !timePattern.test(end)) return 'unknown'

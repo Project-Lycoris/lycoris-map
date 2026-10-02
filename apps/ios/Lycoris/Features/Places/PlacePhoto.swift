@@ -6,6 +6,7 @@ struct PlacePhoto: View {
   var authenticated = false
   var data: Data? = nil
   var photoFailed = false
+  var loadPrivatePhoto: ((URL) async throws -> Data)? = nil
   @State private var loadedImage: UIImage?
   @State private var failed = false
 
@@ -13,7 +14,9 @@ struct PlacePhoto: View {
     Group {
       if let asset = place.photoAsset {
         Image(asset).resizable().aspectRatio(353.0 / 198, contentMode: .fit)
-      } else if let loadedImage = authenticated ? data.flatMap(UIImage.init(data:)) : loadedImage {
+      } else if let loadedImage = authenticated && loadPrivatePhoto == nil
+        ? data.flatMap(UIImage.init(data:)) : loadedImage
+      {
         Rectangle().fill(.clear).aspectRatio(353.0 / 198, contentMode: .fit)
           .overlay { Image(uiImage: loadedImage).resizable().scaledToFill() }.clipped()
       } else if place.imageURL != nil {
@@ -32,9 +35,17 @@ struct PlacePhoto: View {
     .task(id: PhotoRequest(url: place.imageURL, authenticated: authenticated)) {
       loadedImage = nil
       failed = false
-      guard !authenticated, let url = place.imageURL else { return }
+      guard let url = place.imageURL else { return }
       do {
-        loadedImage = try await PlaceImageLoader.load(url)
+        if authenticated {
+          guard let loadPrivatePhoto else { return }
+          let bytes = try await loadPrivatePhoto(url)
+          try Task.checkCancellation()
+          guard let image = UIImage(data: bytes) else { throw PlaceFailure.invalidResponse }
+          loadedImage = image
+        } else {
+          loadedImage = try await PlaceImageLoader.load(url)
+        }
       } catch {
         if !Task.isCancelled { failed = true }
       }

@@ -55,6 +55,8 @@ fn create_request(category: &str, venue_type: Option<&str>) -> MarkerCreateReque
         client_request_id: None,
         mark_image: None,
         venue_type: venue_type.map(str::to_string),
+        categories: None,
+        opening_hours_note: None,
     }
 }
 
@@ -69,6 +71,8 @@ fn update_request(category: Option<&str>, venue_type: Option<&str>) -> MarkerUpd
         open_time_start: None,
         open_time_end: None,
         venue_type: venue_type.map(str::to_string),
+        categories: None,
+        opening_hours_note: None,
     }
 }
 
@@ -705,7 +709,7 @@ async fn responses_expose_venue_type_and_hours_timezone() {
         "SELECT id, version, lat, lng, category, title, description, source_language,
                 is_public, username, user_public_id, client_request_id, is_active,
                 open_time_start, open_time_end, review_status, last_edited_by,
-                last_edited_by_public_id, last_edited_by_owner, mark_image, venue_type,
+                last_edited_by_public_id, last_edited_by_owner, mark_image, venue_type, categories, opening_hours_note,
                 deactivated, created_at, updated_at
          FROM map_markers WHERE id = $1",
     )
@@ -718,4 +722,161 @@ async fn responses_expose_venue_type_and_hours_timezone() {
     assert_eq!(dto.hours_timezone, Shanghai.name());
 
     pool.close().await;
+}
+
+#[tokio::test]
+async fn ordered_categories_notes_and_park_survive_old_clients_and_review() {
+    let (_temp, pool) = TempDatabase::create_migrated().await;
+    let redis = connect_redis().await;
+    let namespace = unique_cache_namespace();
+    let write = write_service(pool.clone(), redis.clone(), &namespace);
+    let mut create = create_request("baby_room", Some("park"));
+    create.categories = Some(vec!["baby_room".into(), "accessible_toilet".into()]);
+    create.opening_hours_note = Some("周一休息；午间 12–14 点暂停开放".into());
+    let marker = write.create_marker(&owner(), "en", create).await.unwrap();
+    assert_eq!(marker.category, "baby_room");
+    assert_eq!(marker.categories, ["baby_room", "accessible_toilet"]);
+    assert_eq!(marker.venue_type.as_deref(), Some("park"));
+    assert_eq!(marker.source_language, "zh");
+    let approved = write.approve_marker(&admin(), marker.id).await.unwrap();
+    assert_eq!(approved.id, marker.id);
+    let legacy = write
+        .admin_update_marker(&admin(), "zh", marker.id, update_request(None, None))
+        .await
+        .unwrap();
+    assert_eq!(legacy.categories, marker.categories);
+    assert_eq!(legacy.opening_hours_note, marker.opening_hours_note);
+    let service = MarkerService::new(
+        lycoris_backend::modules::markers::repository::MarkerRepository::new(pool.clone()),
+        MarkerCache::new(redis, true, namespace),
+        Shanghai,
+    );
+    for category in ["accessible_toilet", "baby_room"] {
+        assert!(
+            service
+                .nearby(1.0, 2.0, 1000, category, "zh")
+                .await
+                .unwrap()
+                .iter()
+                .any(|p| p.id == marker.id)
+        );
+    }
+    let edit = MarkerUpdateRequest {
+        categories: Some(vec!["accessible_toilet".into(), "friendly_clinic".into()]),
+        opening_hours_note: Some("节假日请提前联系".into()),
+        ..Default::default()
+    };
+    write
+        .create_edit_proposal(&owner(), "en", marker.id, edit)
+        .await
+        .unwrap();
+    let proposal: i64 = sqlx::query_scalar(
+        "SELECT id FROM marker_edit_proposals WHERE marker_id=$1 AND status='PENDING'",
+    )
+    .bind(marker.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    write
+        .approve_edit_proposal(&admin(), proposal)
+        .await
+        .unwrap();
+    let cleared = write
+        .admin_update_marker(
+            &admin(),
+            "zh",
+            marker.id,
+            MarkerUpdateRequest {
+                opening_hours_note: Some("".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(cleared.category, "accessible_toilet");
+    assert_eq!(cleared.categories, ["accessible_toilet", "friendly_clinic"]);
+    assert_eq!(cleared.opening_hours_note, None);
+    for categories in [vec![], vec!["unknown".into()]] {
+        let error = write
+            .admin_update_marker(
+                &admin(),
+                "zh",
+                marker.id,
+                MarkerUpdateRequest {
+                    categories: Some(categories),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, WriteError::BadRequest(_)));
+    }
+    let error = write
+        .admin_update_marker(
+            &admin(),
+            "zh",
+            marker.id,
+            MarkerUpdateRequest {
+                opening_hours_note: Some("字".repeat(1001)),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, WriteError::BadRequest(_)));
+}
+
+#[tokio::test]
+async fn upgrade_retains_legacy_cover_and_classifies_only_reviewed_parks() {
+    let temp = TempDatabase::create().await;
+    let pool = temp.connect_pool().await;
+    let previous = sqlx::migrate::Migrator::with_migrations(
+        MIGRATOR
+            .iter()
+            .filter(|m| m.version <= 8)
+            .cloned()
+            .collect(),
+    );
+    previous.run(&pool).await.unwrap();
+    let park = seed_marker(&pool, "accessible_toilet", "APPROVED", false, 1).await;
+    sqlx::query("UPDATE map_markers SET id=220,title='海淀区-马甸公园(北)-无障碍卫生间',venue_type='public_toilet',mark_image='/uploads/markers/legacy.png' WHERE id=$1")
+        .bind(park).execute(&pool).await.unwrap();
+    let station = seed_marker(&pool, "accessible_toilet", "APPROVED", false, 2).await;
+    sqlx::query("UPDATE map_markers SET title='天河公园站',venue_type='metro' WHERE id=$1")
+        .bind(station)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let inactive = seed_marker(&pool, "accessible_toilet", "APPROVED", true, 1).await;
+    sqlx::query("UPDATE map_markers SET id=332,title='和平区-复兴公园公厕(HP1-WDD19)-无障碍卫生间',venue_type='public_toilet' WHERE id=$1")
+        .bind(inactive).execute(&pool).await.unwrap();
+    MIGRATOR.run(&pool).await.unwrap();
+    let row: (String, Vec<String>, Option<String>, i64) = sqlx::query_as(
+        "SELECT venue_type,categories,opening_hours_note,version FROM map_markers WHERE id=220",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        row,
+        ("park".into(), vec!["accessible_toilet".into()], None, 2)
+    );
+    let url: String = sqlx::query_scalar("SELECT image_url FROM marker_photos WHERE marker_id=220")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(url, "/uploads/markers/legacy.png");
+    let station_venue: String =
+        sqlx::query_scalar("SELECT venue_type FROM map_markers WHERE id=$1")
+            .bind(station)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(station_venue, "metro");
+    let inactive_venue: String =
+        sqlx::query_scalar("SELECT venue_type FROM map_markers WHERE id=332")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(inactive_venue, "public_toilet");
 }

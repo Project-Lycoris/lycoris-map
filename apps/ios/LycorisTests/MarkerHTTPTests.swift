@@ -20,9 +20,36 @@ struct MarkerHTTPTests {
     }
     await #expect(
       throws: MarkerRequestFailure(
-        failure: .requestFailed, status: 503, requestID: "fixture-request")
+        failure: .server, status: 503, requestID: "fixture-request")
     ) {
       try await api("offline").detail(id: 1, language: "en")
+    }
+  }
+
+  @Test(arguments: [401, 403, 404, 408, 429, 500, 504])
+  func statusFailuresAreClassifiedWithoutShowingServerBodies(status: Int) async {
+    let expected: [Int: PlaceFailure] = [
+      401: .unauthenticated, 403: .forbidden,
+      404: .unavailable, 408: .timeout, 429: .rateLimited, 500: .server, 504: .timeout,
+    ]
+    await #expect(
+      throws: MarkerRequestFailure(
+        failure: expected[status]!, status: status,
+        requestID: "fixture-request")
+    ) {
+      try await api("http\(status)").detail(id: 1, language: "zh")
+    }
+  }
+
+  @Test func transportFailuresAndCancellationStayDistinct() async {
+    await #expect(throws: PlaceFailure.network) {
+      try await api("network").detail(id: 1, language: "zh")
+    }
+    await #expect(throws: PlaceFailure.timeout) {
+      try await api("timeout").detail(id: 1, language: "zh")
+    }
+    await #expect(throws: CancellationError.self) {
+      try await api("cancelled").detail(id: 1, language: "zh")
     }
   }
 
@@ -65,9 +92,18 @@ private final class MarkerStubProtocol: URLProtocol, @unchecked Sendable {
   override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
   override func startLoading() {
     let url = request.url!
+    let scenario = String(url.host?.split(separator: ".").first ?? "")
+    let transport: [String: URLError.Code] = [
+      "network": .notConnectedToInternet,
+      "timeout": .timedOut, "cancelled": .cancelled,
+    ]
+    if let code = transport[scenario] {
+      client?.urlProtocol(self, didFailWithError: URLError(code))
+      return
+    }
     let status: Int
     let body: String
-    switch url.host?.split(separator: ".").first {
+    switch scenario {
     case "missing":
       status = 404
       body = ""
@@ -83,7 +119,7 @@ private final class MarkerStubProtocol: URLProtocol, @unchecked Sendable {
       body =
         #"{"id":1,"version":1,"lat":31,"lng":121,"category":"accessible_toilet","title":"Wrong ID","contentLanguage":"en"}"#
     default:
-      status = 200
+      status = scenario.hasPrefix("http") ? Int(scenario.dropFirst(4)) ?? 200 : 200
       body = "not JSON"
     }
     client?.urlProtocol(

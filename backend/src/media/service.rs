@@ -389,6 +389,26 @@ impl MediaService {
             return Err(MediaServiceError::BadRequest("该提案已处理".to_string()));
         }
 
+        // Serialize album publication per place; cover order follows upload proposal IDs,
+        // so approving photos in reverse order cannot change their intended order.
+        let marker = self
+            .repo
+            .lock_marker_by_id(&mut transaction, proposal.marker_id)
+            .await
+            .map_err(|error| db_error("锁定相册点位", error))?;
+        if marker.is_none_or(|marker| marker.deactivated) {
+            return Err(MediaServiceError::NotFound("关联点位不存在"));
+        }
+        self.repo
+            .append_marker_photo(
+                &mut transaction,
+                proposal.marker_id,
+                &proposal.image_url,
+                proposal.id,
+            )
+            .await
+            .map_err(|error| db_error("追加点位图片", error))?;
+
         let Some(updated) = self
             .repo
             .update_marker_mark_image(&mut transaction, &proposal.image_url, proposal.marker_id)

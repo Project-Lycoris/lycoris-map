@@ -10,7 +10,7 @@
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use serde::Deserialize;
 
 use crate::app::AppState;
@@ -66,10 +66,7 @@ pub async fn approve_image_proposal(
         .approve_image_proposal(id, &viewer, reviewer)
         .await
     {
-        Ok(row) => match state.markers.localize_row(row, lang).await {
-            Ok(marker) => json_marker(&marker),
-            Err(error) => error.into_reply(ErrorShape::Text).into_response(),
-        },
+        Ok(row) => json_marker(&state.markers.committed_row(row, lang).await),
         Err(error) => media_error_response(error, ErrorShape::Text),
     }
 }

@@ -26,7 +26,7 @@ struct PlaceMetadataTests {
       #expect(!en.isEmpty && !zh.isEmpty)
       #expect(en != zh)
     }
-    #expect(PlaceVenue.allCases.count == 8)
+    #expect(PlaceVenue.allCases.count == 9)
   }
 
   @Test func newVenuesSurviveEditingAndDraftRestoration() throws {
@@ -110,7 +110,8 @@ struct PlaceMetadataTests {
   @Test func statusUsesTheServerZoneAndWarnsExactlyThirtyMinutesBeforeClosing() {
     func status(_ iso: String) -> OpeningStatus {
       OpeningStatusEngine.status(
-        start: "09:00", end: "22:00", timeZone: shanghai, now: Date(timeIntervalSince1970: isoDate(iso)))
+        start: "09:00", end: "22:00", timeZone: shanghai,
+        now: Date(timeIntervalSince1970: isoDate(iso)))
     }
     #expect(status("2026-09-20T13:29:59Z") == .open)
     #expect(status("2026-09-20T13:30:00Z") == .closingSoon)
@@ -124,7 +125,8 @@ struct PlaceMetadataTests {
     let overnight = (
       start: "22:00", end: "06:00", zone: shanghai as String?
     )
-    func status(_ iso: String, _ hours: (start: String, end: String, zone: String?)) -> OpeningStatus
+    func status(_ iso: String, _ hours: (start: String, end: String, zone: String?))
+      -> OpeningStatus
     {
       OpeningStatusEngine.status(
         start: hours.start, end: hours.end, timeZone: hours.zone,
@@ -139,12 +141,24 @@ struct PlaceMetadataTests {
 
   @Test func invalidOrAbsentHoursAreUnknownAndMissingZoneIsScheduled() {
     let now = Date(timeIntervalSince1970: isoDate("2026-09-20T13:45:00Z"))
-    #expect(OpeningStatusEngine.status(start: nil, end: "22:00", timeZone: shanghai, now: now) == .unknown)
-    #expect(OpeningStatusEngine.status(start: "24:00", end: "22:00", timeZone: shanghai, now: now) == .unknown)
-    #expect(OpeningStatusEngine.status(start: "09:00", end: "9:00", timeZone: shanghai, now: now) == .unknown)
-    #expect(OpeningStatusEngine.status(start: "09:00", end: "22:00", timeZone: nil, now: now) == .scheduled)
-    #expect(OpeningStatusEngine.status(start: "09:00", end: "22:00", timeZone: "", now: now) == .scheduled)
-    #expect(OpeningStatusEngine.status(start: "09:00", end: "22:00", timeZone: "not-a-zone", now: now) == .scheduled)
+    #expect(
+      OpeningStatusEngine.status(start: nil, end: "22:00", timeZone: shanghai, now: now) == .unknown
+    )
+    #expect(
+      OpeningStatusEngine.status(start: "24:00", end: "22:00", timeZone: shanghai, now: now)
+        == .unknown)
+    #expect(
+      OpeningStatusEngine.status(start: "09:00", end: "9:00", timeZone: shanghai, now: now)
+        == .unknown)
+    #expect(
+      OpeningStatusEngine.status(start: "09:00", end: "22:00", timeZone: nil, now: now)
+        == .scheduled)
+    #expect(
+      OpeningStatusEngine.status(start: "09:00", end: "22:00", timeZone: "", now: now) == .scheduled
+    )
+    #expect(
+      OpeningStatusEngine.status(start: "09:00", end: "22:00", timeZone: "not-a-zone", now: now)
+        == .scheduled)
     // A scheduled status must not claim open/closed in either language.
     #expect(OpeningStatus.scheduled.label(language: .english).isEmpty)
     #expect(OpeningStatus.scheduled.label(language: .chinese).isEmpty)
@@ -174,15 +188,23 @@ struct PlaceMetadataTests {
   @Test func closingSoonIsTextuallyDistinctFromOpen() {
     #expect(OpeningStatus.open.label(language: .english) == "Open now")
     #expect(OpeningStatus.closingSoon.label(language: .english) == "Closing soon")
-    #expect(OpeningStatus.open.label(language: .english) != OpeningStatus.closingSoon.label(language: .english))
-    #expect(OpeningStatus.closingSoon.label(language: .chinese) != OpeningStatus.open.label(language: .chinese))
+    #expect(
+      OpeningStatus.open.label(language: .english)
+        != OpeningStatus.closingSoon.label(language: .english))
+    #expect(
+      OpeningStatus.closingSoon.label(language: .chinese)
+        != OpeningStatus.open.label(language: .chinese))
   }
 
   @Test func deviceTimeZoneDoesNotAffectARemotePlacesStatus() {
     // The same instant is open in Shanghai but closed in New York for 09:00–22:00.
     let now = Date(timeIntervalSince1970: isoDate("2026-09-20T13:45:00Z"))
-    #expect(OpeningStatusEngine.status(start: "09:00", end: "22:00", timeZone: "Asia/Shanghai", now: now) == .closingSoon)
-    #expect(OpeningStatusEngine.status(start: "09:00", end: "22:00", timeZone: "America/New_York", now: now) == .open)
+    #expect(
+      OpeningStatusEngine.status(start: "09:00", end: "22:00", timeZone: "Asia/Shanghai", now: now)
+        == .closingSoon)
+    #expect(
+      OpeningStatusEngine.status(
+        start: "09:00", end: "22:00", timeZone: "America/New_York", now: now) == .open)
   }
 
   @Test func statusFollowsIanaDaylightSavingNotAFixedOffset() {
@@ -201,8 +223,11 @@ struct PlaceMetadataTests {
     #expect(OpeningStatus.open.label(language: .english) == "Open now")
     #expect(OpeningStatus.closingSoon.label(language: .english) == "Closing soon")
     #expect(OpeningStatus.closed.label(language: .english) == "Closed now")
-    #expect(OpeningStatus.open.label(language: .chinese) != OpeningStatus.open.label(language: .english))
-    #expect(OpeningStatus.closed.label(language: .chinese) != OpeningStatus.closed.label(language: .english))
+    #expect(
+      OpeningStatus.open.label(language: .chinese) != OpeningStatus.open.label(language: .english))
+    #expect(
+      OpeningStatus.closed.label(language: .chinese)
+        != OpeningStatus.closed.label(language: .english))
     #expect(OpeningStatus.open.usesStatusColor)
     #expect(OpeningStatus.closingSoon.usesStatusColor)
     #expect(OpeningStatus.scheduled.usesStatusColor)
@@ -213,7 +238,8 @@ struct PlaceMetadataTests {
 
   @Test func presentationExposesVenueStatusAndRawValues() throws {
     let marker = try decodeMarker(
-      venueType: "metro", json: #""openTimeStart":"09:00","openTimeEnd":"22:00","hoursTimezone":"Asia/Shanghai""#)
+      venueType: "metro",
+      json: #""openTimeStart":"09:00","openTimeEnd":"22:00","hoursTimezone":"Asia/Shanghai""#)
     let place = PlacePresentation(marker: marker, origin: nil, located: false, baseURL: nil)
     #expect(place.venue == .metro)
     #expect(place.venueRaw == "metro")
@@ -228,7 +254,8 @@ struct PlaceMetadataTests {
 
   @Test func accessibilityLabelAddsVenueAndRealStatusButKeepsTheRest() throws {
     let marker = try decodeMarker(
-      venueType: "school", json: #""openTimeStart":"09:00","openTimeEnd":"22:00","hoursTimezone":"Asia/Shanghai""#)
+      venueType: "school",
+      json: #""openTimeStart":"09:00","openTimeEnd":"22:00","hoursTimezone":"Asia/Shanghai""#)
     let place = PlacePresentation(marker: marker, origin: nil, located: false, baseURL: nil)
     let now = Date(timeIntervalSince1970: isoDate("2026-09-20T13:45:00Z"))
     let en = PlaceAccessibility.placeLabel(place, language: .english, now: now)
@@ -344,7 +371,7 @@ struct PlaceMetadataTests {
     #expect(try json(edit)["venueType"] as? String == "school")
   }
 
-  @Test func unicodeDigitsAreNotValidTimes() {    // JavaScript's digit class is ASCII-only, and so is the shared contract.
+  @Test func unicodeDigitsAreNotValidTimes() {  // JavaScript's digit class is ASCII-only, and so is the shared contract.
     // Swift's regex digit class would accept Arabic-Indic/full-width digits, so
     // the engine must reject them and never treat them as all-day open.
     for value in ["0١:0١", "٠٩:٠٠", "０９:００", "09：00"] {

@@ -21,6 +21,7 @@ export const venueTypeSchema = z.enum([
     'school',
     'public_toilet',
     'airport',
+    'park',
     'other',
 ])
 export type VenueType = z.infer<typeof venueTypeSchema>
@@ -43,6 +44,11 @@ export const markerSchema = z.object({
     lat: z.number().min(-90).max(90),
     lng: z.number().min(-180).max(180),
     category: markerCategorySchema,
+    categories: z.array(markerCategorySchema).optional(),
+    openingHoursNote: z.string().nullable().optional(),
+    photos: z
+        .array(z.object({ id: safeInteger, url: z.string(), sortOrder: safeInteger }))
+        .optional(),
     venueType: venueTypeReadSchema,
     hoursTimezone: z.string().optional(),
     title: z.string(),

@@ -1,8 +1,7 @@
 //! 阶段 3 点位写入、收藏、删除与审核事务核心。
 //!
 //! 本模块只做业务事务，不含 HTTP 路由/认证/`AppState`/config：身份由 [`Actor`] 显式传入，
-//! 可见性复用读取层 `can_view`。所有固定 SQL 都经 `sql/` 下的 `.sql` 文件与
-//! `query_file!` / `query_file_as!` 编译期校验，参数全部绑定。
+//! 可见性复用读取层 `can_view`。固定 SQL 经 SQLx 编译期校验，参数全部绑定。
 //!
 //! 关键并发约束（与 `write-design.md` 一致）：
 //! - 创建幂等只在 `client_request_id` 命中既有唯一约束时读回原点位，绝不把任意数据库错误
@@ -10,7 +9,7 @@
 //! - 收藏先对点位取 `FOR KEY SHARE` 再插收藏，避免与删除点位交错产生孤立收藏；
 //! - 停用在同一个事务内 `FOR UPDATE` 锁点位并推进版本，点位和全部关联数据留存；
 //! - 编辑审核固定顺序：先 `FOR UPDATE` 锁提案、检查 `PENDING`、再 `FOR UPDATE` 锁点位、核对
-//!   `base_marker_version`，然后更新点位/译文/提案；两管理员竞争由行锁保证只有一人成功；
+//!   `base_marker_version` 与内容快照，然后更新中文原文/提案；译文仅由管理员手动同步；
 //! - 原文与译文编辑共用同一 `marker.version`，任何文本变化都推进版本并以行锁串行；
 //! - 提交成功后才使缓存失效，缓存故障只受控记录，绝不回退已提交的写入。
 
@@ -38,6 +37,8 @@ const CLIENT_REQUEST_ID_MAX: usize = 64;
 /// 从 `map_markers` 一次写回的全部可变字段。
 struct MarkerValues {
     category: String,
+    categories: Vec<String>,
+    opening_hours_note: Option<String>,
     title: String,
     description: Option<String>,
     source_language: String,
@@ -82,7 +83,7 @@ impl MarkerWriteService {
     pub async fn create_marker(
         &self,
         actor: &Actor,
-        request_language: &str,
+        _request_language: &str,
         req: MarkerCreateRequest,
     ) -> Result<MarkerRow, WriteError> {
         validate_actor(actor)?;
@@ -107,7 +108,10 @@ impl MarkerWriteService {
         if !lng.is_finite() || !(-180.0..=180.0).contains(&lng) {
             return Err(WriteError::BadRequest("lat/lng 不合法".to_string()));
         }
-        let category = normalize_category(req.category.as_deref())?;
+        let categories =
+            resolve_categories(req.categories.as_deref(), req.category.as_deref(), &[])?;
+        let category = categories[0].clone();
+        let opening_hours_note = resolve_hours_note(req.opening_hours_note.as_deref(), None)?;
         let title = req.title.clone().expect("已校验必填字段");
         if db_len(&title) > TITLE_MAX {
             return Err(WriteError::BadRequest("title 过长".to_string()));
@@ -117,10 +121,12 @@ impl MarkerWriteService {
         let mark_image = normalize_mark_image(req.mark_image.as_deref())?;
         let (open_time_start, open_time_end) =
             resolve_open_window(req.open_time_start.as_deref(), req.open_time_end.as_deref())?;
-        let language = resolve_language(req.language.as_deref(), request_language);
+        // Submission language is independent of the client UI; English is synced manually.
+        let language = "zh";
         let is_public = req.is_public.unwrap_or(true);
         let is_active = req.is_active.unwrap_or(true);
-        let venue_type = resolve_venue_type_create(&category, req.venue_type.as_deref())?;
+        let venue_type =
+            resolve_venue_type_create(venue_category(&categories), req.venue_type.as_deref())?;
 
         let mut tx = self
             .pool
@@ -147,6 +153,8 @@ impl MarkerWriteService {
             venue_type.as_deref(),
             actor.username.as_str(),
             actor.public_id.as_str(),
+            &categories,
+            opening_hours_note.as_deref(),
         )
         .fetch_one(&mut *tx)
         .await;
@@ -240,7 +248,7 @@ impl MarkerWriteService {
     pub async fn create_edit_proposal(
         &self,
         actor: &Actor,
-        request_language: &str,
+        _request_language: &str,
         marker_id: i64,
         req: MarkerUpdateRequest,
     ) -> Result<MarkerRow, WriteError> {
@@ -260,10 +268,16 @@ impl MarkerWriteService {
             return Err(WriteError::NotFound(MSG_MARKER_NOT_FOUND.to_string()));
         }
 
-        let category = match req.category.as_deref() {
-            Some(raw) => normalize_category(Some(raw))?,
-            None => marker.category.clone(),
-        };
+        let categories = resolve_categories(
+            req.categories.as_deref(),
+            req.category.as_deref(),
+            &marker.categories,
+        )?;
+        let category = categories[0].clone();
+        let opening_hours_note = resolve_hours_note(
+            req.opening_hours_note.as_deref(),
+            marker.opening_hours_note.as_deref(),
+        )?;
         if db_len(&category) > CATEGORY_MAX {
             return Err(WriteError::BadRequest("category 过长".to_string()));
         }
@@ -272,8 +286,8 @@ impl MarkerWriteService {
             &marker,
             req.title.as_deref(),
             req.description.as_deref(),
-            req.language.as_deref(),
-            request_language,
+            Some("zh"),
+            "zh",
         )
         .await?;
         if db_len(&text.title) > TITLE_MAX {
@@ -288,7 +302,7 @@ impl MarkerWriteService {
         let is_public = req.is_public.unwrap_or(marker.is_public);
         let is_active = req.is_active.unwrap_or(marker.is_active);
         let venue_type = resolve_venue_type_update(
-            &category,
+            venue_category(&categories),
             req.venue_type.as_deref(),
             marker.venue_type.as_deref(),
         )?;
@@ -297,6 +311,7 @@ impl MarkerWriteService {
             return Err(WriteError::BadRequest("language 不合法".to_string()));
         }
 
+        let base_content = content_snapshot(&mut tx, &marker).await?;
         sqlx::query_file!(
             "src/modules/markers/sql/insert_edit_proposal.sql",
             marker.id,
@@ -309,13 +324,16 @@ impl MarkerWriteService {
             category.as_str(),
             text.title.as_str(),
             text.description.as_deref(),
-            text.language.as_str(),
+            "zh",
             is_public,
             is_active,
             open_time_start.as_deref(),
             open_time_end.as_deref(),
             venue_type.as_deref(),
             marker.version,
+            base_content,
+            &categories,
+            opening_hours_note.as_deref(),
         )
         .execute(&mut *tx)
         .await
@@ -428,15 +446,20 @@ impl MarkerWriteService {
             ));
         }
         if proposal.base_marker_version.is_none()
-            || proposal.base_marker_version != Some(marker.version)
+            || (proposal.base_marker_version != Some(marker.version)
+                && proposal.base_content.as_ref()
+                    != Some(&content_snapshot(&mut tx, &marker).await?))
         {
             return Err(WriteError::Conflict(MSG_STALE_VERSION.to_string()));
         }
 
-        let target = normalize(Some(&proposal.language)).to_string();
-        let source_edit = target == normalize(Some(&marker.source_language));
+        // Public contributions always update Chinese source content. Only the
+        // explicit admin edit path below can write a manual English translation.
         let mut values = base_values(&marker);
+        values.source_language = "zh".to_string();
         values.category = normalize_category(Some(&proposal.category))?;
+        values.categories = proposal.categories.clone();
+        values.opening_hours_note = proposal.opening_hours_note.clone();
         values.is_public = proposal.is_public;
         values.is_active = proposal.is_active;
         values.open_time_start = proposal.open_time_start.clone();
@@ -446,22 +469,9 @@ impl MarkerWriteService {
         values.last_edited_by = Some(proposal.proposer_username.clone());
         values.last_edited_by_public_id = proposal.proposer_public_id.clone();
         values.last_edited_by_owner = proposal.proposer_is_owner;
-        if source_edit {
-            values.title = proposal.title.clone();
-            values.description = proposal.description.clone();
-        }
+        values.title = proposal.title.clone();
+        values.description = proposal.description.clone();
         let updated = write_marker_fields(&mut tx, marker.id, values).await?;
-        if !source_edit {
-            upsert_translation(
-                &mut tx,
-                updated.id,
-                &target,
-                &proposal.title,
-                proposal.description.as_deref(),
-                &source_hash(&updated),
-            )
-            .await?;
-        }
         update_proposal_status(&mut tx, proposal_id, "APPROVED", &actor.username).await?;
         tx.commit().await.map_err(|error| log_db_error(&error))?;
         self.invalidate_after_commit().await;
@@ -512,10 +522,16 @@ impl MarkerWriteService {
         let Some(marker) = marker else {
             return Err(WriteError::NotFound(MSG_MARKER_NOT_FOUND.to_string()));
         };
-        let category = match req.category.as_deref() {
-            Some(raw) => normalize_category(Some(raw))?,
-            None => marker.category.clone(),
-        };
+        let categories = resolve_categories(
+            req.categories.as_deref(),
+            req.category.as_deref(),
+            &marker.categories,
+        )?;
+        let category = categories[0].clone();
+        let opening_hours_note = resolve_hours_note(
+            req.opening_hours_note.as_deref(),
+            marker.opening_hours_note.as_deref(),
+        )?;
         let text = resolve_edit_text(
             &mut tx,
             &marker,
@@ -535,12 +551,14 @@ impl MarkerWriteService {
             };
 
         let venue_type = resolve_venue_type_update(
-            &category,
+            venue_category(&categories),
             req.venue_type.as_deref(),
             marker.venue_type.as_deref(),
         )?;
         let mut values = base_values(&marker);
         values.category = category;
+        values.categories = categories;
+        values.opening_hours_note = opening_hours_note;
         values.is_public = req.is_public.unwrap_or(marker.is_public);
         values.is_active = req.is_active.unwrap_or(marker.is_active);
         values.open_time_start = open_time_start;
@@ -962,9 +980,35 @@ async fn resolve_edit_text(
     })
 }
 
+/// Fields a content proposal can overwrite (plus location/visibility guards).
+/// Images, review status and audit timestamps cannot make an otherwise current edit stale.
+async fn content_snapshot(
+    conn: &mut PgConnection,
+    marker: &MarkerRow,
+) -> Result<serde_json::Value, WriteError> {
+    let last_deactivated_version = sqlx::query_scalar!(
+        "SELECT last_deactivated_version FROM map_markers WHERE id = $1",
+        marker.id
+    )
+    .fetch_one(conn)
+    .await
+    .map_err(|error| log_db_error(&error))?;
+    Ok(serde_json::json!({
+        "category": marker.category, "categories": marker.categories, "opening_hours_note": marker.opening_hours_note, "title": marker.title, "description": marker.description,
+        "source_language": marker.source_language,
+        "lat": format!("{:016x}", marker.lat.to_bits()), "lng": format!("{:016x}", marker.lng.to_bits()),
+        "is_public": marker.is_public, "is_active": marker.is_active,
+        "open_time_start": marker.open_time_start, "open_time_end": marker.open_time_end,
+        "venue_type": marker.venue_type, "deactivated": marker.deactivated,
+        "last_deactivated_version": last_deactivated_version,
+    }))
+}
+
 fn base_values(marker: &MarkerRow) -> MarkerValues {
     MarkerValues {
         category: marker.category.clone(),
+        categories: marker.categories.clone(),
+        opening_hours_note: marker.opening_hours_note.clone(),
         title: marker.title.clone(),
         description: marker.description.clone(),
         source_language: marker.source_language.clone(),
@@ -1043,6 +1087,8 @@ async fn write_marker_fields(
 ) -> Result<MarkerRow, WriteError> {
     let MarkerValues {
         category,
+        categories,
+        opening_hours_note,
         title,
         description,
         source_language,
@@ -1073,6 +1119,8 @@ async fn write_marker_fields(
         last_edited_by_public_id,
         last_edited_by_owner,
         venue_type,
+        &categories,
+        opening_hours_note,
     )
     .fetch_one(&mut **tx)
     .await
@@ -1168,6 +1216,59 @@ fn log_db_error(error: &sqlx::Error) -> WriteError {
     } else {
         WriteError::Internal
     }
+}
+
+/// An omitted multi-type field from an old client preserves supplementary types.
+fn resolve_categories(
+    explicit: Option<&[String]>,
+    primary: Option<&str>,
+    current: &[String],
+) -> Result<Vec<String>, WriteError> {
+    let source = match explicit {
+        Some(values) if values.is_empty() || values.len() > 4 => {
+            return Err(WriteError::BadRequest("请选择 1–4 个设施类型".into()));
+        }
+        Some(values) => values.to_vec(),
+        None => {
+            let first = match primary {
+                Some(value) => normalize_category(Some(value))?,
+                None => current.first().cloned().ok_or_else(missing_fields)?,
+            };
+            let mut values = vec![first];
+            values.extend(current.iter().skip(1).cloned());
+            values
+        }
+    };
+    let mut result = Vec::new();
+    for value in source {
+        let value = normalize_category(Some(&value))?;
+        if !result.contains(&value) {
+            result.push(value);
+        }
+    }
+    Ok(result)
+}
+fn venue_category(categories: &[String]) -> &str {
+    if categories.iter().any(|value| value == "accessible_toilet") {
+        "accessible_toilet"
+    } else {
+        "self_definition"
+    }
+}
+fn resolve_hours_note(
+    value: Option<&str>,
+    previous: Option<&str>,
+) -> Result<Option<String>, WriteError> {
+    let value = value
+        .or(previous)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if value.is_some_and(|value| value.chars().count() > 1000) {
+        return Err(WriteError::BadRequest(
+            "营业时间备注不能超过 1000 字".into(),
+        ));
+    }
+    Ok(value.map(str::to_string))
 }
 
 #[cfg(test)]

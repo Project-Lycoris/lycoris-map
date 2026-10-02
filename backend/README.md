@@ -42,6 +42,8 @@ Normal startup verifies migration history without changing the schema. Apply pen
 
 For an older database with application tables but no SQLx history, use `--check-baseline` for a read-only check, then `--adopt-baseline` to register the verified baseline before `--migrate`. Back up existing data first. Adoption does not recreate business tables.
 
+Migrations `0009`–`0011` add ordered facility types, opening-hours notes, published photo albums, and the park venue. Existing `category`/`markImage` remain compatible with older clients. The last migration only reclassifies eight reviewed records when their ID, title, and version still match. Back up the database and uploads, apply these migrations, and deploy the API before clients start sending the new fields.
+
 After changing SQL queries, point `DATABASE_URL` at a migrated synthetic database and regenerate metadata with SQLx CLI 0.9.0:
 
 ```sh

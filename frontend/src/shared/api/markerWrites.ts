@@ -7,6 +7,8 @@ export const markerTextSchema = z
     .object({
         title: z.string().refine((value) => value.trim().length > 0 && [...value].length <= 120),
         category: markerCategorySchema,
+        categories: z.array(markerCategorySchema).min(1).max(4).optional(),
+        openingHoursNote: z.string().max(1000).optional(),
         venueType: venueTypeSchema.nullable().optional(),
         description: z.string(),
         language: z.enum(['en', 'zh']),
@@ -15,7 +17,11 @@ export const markerTextSchema = z
         openTimeEnd: time,
     })
     .refine((value) => Boolean(value.openTimeStart) === Boolean(value.openTimeEnd))
-    .refine((value) => value.category === 'accessible_toilet' || value.venueType == null)
+    .refine(
+        (value) =>
+            (value.categories ?? [value.category]).includes('accessible_toilet') ||
+            value.venueType == null,
+    )
 export const markerCreateSchema = markerTextSchema.safeExtend({
     lat: z.number().min(-90).max(90),
     lng: z.number().min(-180).max(180),

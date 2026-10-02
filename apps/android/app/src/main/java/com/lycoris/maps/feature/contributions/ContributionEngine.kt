@@ -54,8 +54,11 @@ class ContributionEngine(
                     attempts = 0, problem = null,
                 ))
             }
-            if (draft.phase == DraftPhase.UPLOADING) upload(draft, identity)
-            else ContributionRunResult.DONE
+            while (draft.phase == DraftPhase.UPLOADING) {
+                upload(draft, identity)
+                draft = store.get(id) ?: throw DraftStorageFailure()
+            }
+            ContributionRunResult.DONE
         } catch (cancelled: CancellationException) {
             // Creation/chunks/completion are idempotent; leave their exact durable checkpoint for reconciliation.
             throw cancelled
@@ -156,7 +159,12 @@ class ContributionEngine(
     }
 
     private suspend fun finish(draft: ContributionDraft): ContributionRunResult {
-        store.update(draft, draft.copy(phase = DraftPhase.COMPLETE, paused = false, attempts = 0, problem = null))
+        val next = draft.queuedPhotos.firstOrNull()
+        if (next != null) {
+            store.update(draft, draft.copy(photo = next, queuedPhotos = draft.queuedPhotos.drop(1), upload = null,
+                uploadedPhotoCount = draft.uploadedPhotoCount + 1, paused = false, attempts = 0, problem = null))
+            draft.photo?.let(photos::delete)
+        } else store.update(draft, draft.copy(phase = DraftPhase.COMPLETE, paused = false, attempts = 0, problem = null))
         // Keep the encoded file until the user discards this local record. A COMPLETE checkpoint remains valid.
         return ContributionRunResult.DONE
     }

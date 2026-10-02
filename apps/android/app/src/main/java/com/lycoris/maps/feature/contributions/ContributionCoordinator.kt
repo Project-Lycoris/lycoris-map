@@ -129,7 +129,7 @@ class ContributionCoordinator(
         val draft = ContributionDraft(
             id = UUID.randomUUID().toString(), owner = identity.publicId, origin = identity.origin,
             latitude = latitude, longitude = longitude,
-            fields = original?.let(ContributionFields::fromMarker) ?: ContributionFields(language = language),
+            fields = original?.let(ContributionFields::fromMarker) ?: ContributionFields(language = "zh"),
             original = original, updatedAt = System.currentTimeMillis(),
         )
         requireIdentity(identity)
@@ -147,7 +147,7 @@ class ContributionCoordinator(
         }
     }
 
-    suspend fun importPhoto(id: String, uri: Uri) = owned { identity ->
+    suspend fun importPhoto(id: String, uri: Uri, append: Boolean = false) = owned { identity ->
         val before = locks.forDraft(id).withLock { requireOwned(id, identity).also { require(it.canReplacePhoto) } }
         var imported: EncodedPhoto? = null
         var committed = false
@@ -160,9 +160,12 @@ class ContributionCoordinator(
                 require(draft.canReplacePhoto && draft.photo == before.photo && draft.phase == before.phase)
                 withContext(NonCancellable) {
                     requireIdentity(identity)
-                    val saved = store.update(draft, draft.copy(photo = photo, upload = null, problem = null, paused = false, attempts = 0))
+                    val appending = append && draft.editable && draft.photo != null
+                    val next = if (appending) draft.copy(queuedPhotos = draft.queuedPhotos + photo)
+                        else draft.copy(photo = photo, upload = null, problem = null, paused = false, attempts = 0)
+                    val saved = store.update(draft, next)
                     committed = true
-                    draft.photo?.let(importer.files::delete)
+                    if (!appending) draft.photo?.let(importer.files::delete)
                     if (saved.safelyResumable) scheduler.enqueue(saved)
                 }
             }
@@ -171,14 +174,18 @@ class ContributionCoordinator(
         }
     }
 
-    suspend fun removePhoto(id: String) = owned { identity ->
+    suspend fun removePhoto(id: String, photoId: String? = null) = owned { identity ->
         locks.forDraft(id).withLock {
             val draft = requireOwned(id, identity)
             require(draft.editable)
             withContext(NonCancellable) {
                 requireIdentity(identity)
-                store.update(draft, draft.copy(photo = null, upload = null))
-                draft.photo?.let(importer.files::delete)
+                val removed = draft.remainingPhotos.firstOrNull { photoId == null || it.id == photoId }
+                if (removed != null) {
+                    val remaining = draft.remainingPhotos.filter { it.id != removed.id }
+                    store.update(draft, draft.copy(photo = remaining.firstOrNull(), queuedPhotos = remaining.drop(1), upload = null))
+                    importer.files.delete(removed)
+                }
             }
         }
     }
@@ -190,7 +197,7 @@ class ContributionCoordinator(
             locks.forDraft(id).withLock {
                 val draft = requireOwned(id, identity)
                 require(draft.canSubmit)
-                draft.photo?.let(importer.files::verify)
+                draft.remainingPhotos.forEach(importer.files::verify)
                 val phase = when {
                     draft.original == null -> DraftPhase.CREATING
                     draft.hasTextChanges -> DraftPhase.EDITING
@@ -236,7 +243,7 @@ class ContributionCoordinator(
             withContext(NonCancellable) {
                 requireIdentity(identity)
                 store.delete(draft)
-                draft.photo?.let(importer.files::delete)
+                draft.remainingPhotos.forEach(importer.files::delete)
             }
         }
     }

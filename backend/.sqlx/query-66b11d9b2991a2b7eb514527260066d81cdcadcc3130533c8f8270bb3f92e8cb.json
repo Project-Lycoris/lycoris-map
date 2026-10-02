@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE map_markers\nSET last_deactivated_version = CASE WHEN $2 THEN version + 1 ELSE last_deactivated_version END,\n    deactivated = $2, version = version + 1, updated_at = now()\nWHERE id = $1 AND deactivated <> $2\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "66b11d9b2991a2b7eb514527260066d81cdcadcc3130533c8f8270bb3f92e8cb"
+}

@@ -444,29 +444,48 @@
 .contribution-bar {
     position: absolute;
     top: 12px;
-    left: calc(50% - 114px);
-    width: 400px;
-    height: 48px;
+    left: calc(var(--ui-nav-width) + 16px);
+    width: min(480px, calc(100% - var(--ui-nav-width) - 110px));
+    min-height: 48px;
     border-radius: 22px;
     background: var(--ui-brand-blush);
     display: flex;
     align-items: center;
     gap: 16px;
-    padding: 0 16px;
+    padding: 8px 16px;
     color: var(--ui-brand);
-    font: 500 20px/20px var(--ui-font-nav);
+    font: 500 20px/24px var(--ui-font-nav);
     letter-spacing: 0.1px;
     z-index: 10;
 }
 .contribution-bar span {
     text-align: center;
-    white-space: nowrap;
+    white-space: normal;
+    min-width: 0;
     flex: 1;
+}
+.map-shell[data-mobile='false'][data-panel='contribute'] .map-notices {
+    top: 110px;
 }
 .contribution-bar button {
     width: 24px;
     height: 24px;
     flex: none;
+}
+.map-shell[data-mobile='true'] .contribution-bar {
+    top: auto;
+    bottom: 22px;
+    left: 11px;
+    width: calc(100% - 22px);
+    height: auto;
+    min-height: 52px;
+    gap: 8px;
+    padding: 8px 12px;
+    font: 500 16px/22px var(--ui-font-body);
+}
+.map-shell[data-mobile='true'] .contribution-bar button {
+    width: 44px;
+    height: 44px;
 }
 .bookmark-card .place-summary {
     display: flex;

@@ -1,0 +1,331 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n    id, version, lat, lng, category, title, description, source_language,\n    is_public, username, user_public_id, client_request_id, is_active,\n    open_time_start, open_time_end, review_status, last_edited_by,\n    last_edited_by_public_id, last_edited_by_owner, mark_image, venue_type, categories, opening_hours_note, deactivated, created_at, updated_at\nFROM map_markers m\nWHERE m.is_public = true\n  AND m.review_status = 'APPROVED'\n  AND m.deactivated = false\n  AND m.lat BETWEEN $1 AND $2\n  AND m.lng BETWEEN $3 AND $4\nORDER BY m.id ASC\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "version",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "version"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "lat",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "lat"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "lng",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "lng"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "category",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "category"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "title",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "description",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "description"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "source_language",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "source_language"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "is_public",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "is_public"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "username",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "user_public_id",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "user_public_id"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "client_request_id",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "client_request_id"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "is_active",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "is_active"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "open_time_start",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "open_time_start"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "open_time_end",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "open_time_end"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "review_status",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "review_status"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "last_edited_by",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "last_edited_by"
+          }
+        }
+      },
+      {
+        "ordinal": 17,
+        "name": "last_edited_by_public_id",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "last_edited_by_public_id"
+          }
+        }
+      },
+      {
+        "ordinal": 18,
+        "name": "last_edited_by_owner",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "last_edited_by_owner"
+          }
+        }
+      },
+      {
+        "ordinal": 19,
+        "name": "mark_image",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "mark_image"
+          }
+        }
+      },
+      {
+        "ordinal": 20,
+        "name": "venue_type",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "venue_type"
+          }
+        }
+      },
+      {
+        "ordinal": 21,
+        "name": "categories",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "categories"
+          }
+        }
+      },
+      {
+        "ordinal": 22,
+        "name": "opening_hours_note",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "opening_hours_note"
+          }
+        }
+      },
+      {
+        "ordinal": 23,
+        "name": "deactivated",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "deactivated"
+          }
+        }
+      },
+      {
+        "ordinal": 24,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 25,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Float8",
+        "Float8",
+        "Float8",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "43513c9a5920115a9012d33195879a948165a7cf926f7d50dfe10c8f3a08b517"
+}

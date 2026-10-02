@@ -8,6 +8,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import com.lycoris.maps.core.map.categoryColor
+import com.lycoris.maps.core.model.PlaceCategory
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -66,9 +69,16 @@ fun PlaceHours(place: Marker, chinese: Boolean) {
 /** Keep detail metadata together, wrapping only when text or the available width requires it. */
 @Composable
 fun PlaceMetadataRow(place: Marker, chinese: Boolean) {
-    if (place.venue == null && place.hoursLabel(chinese) == null) return
     FlowRow(horizontalArrangement = Arrangement.spacedBy(11.dp), verticalArrangement = Arrangement.spacedBy(11.dp),
         itemVerticalAlignment = Alignment.CenterVertically) {
+        if (place.facilityCategories.size > 1) place.facilityCategories.forEach { category ->
+            val color = Color(categoryColor(PlaceCategory.fromWire(category)))
+            Surface(shape = MaterialTheme.shapes.small, color = color.copy(alpha = 0.16f),
+                border = BorderStroke(1.dp, color.copy(alpha = 0.35f))) {
+                Text(categoryName(category, chinese), Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    style = MaterialTheme.typography.labelMedium)
+            }
+        }
         PlaceVenueTag(place, chinese)
         HoursBadges(place, chinese)
     }

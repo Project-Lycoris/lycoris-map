@@ -1,3 +1,4 @@
+import { BrowserDraftJournal } from '@/features/contributions/DraftJournal'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -13,7 +14,10 @@ afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
 })
-function mount() {
+function mount(clusterSize = 0) {
+    vi.spyOn(BrowserDraftJournal.prototype, 'list').mockResolvedValue([])
+    vi.spyOn(BrowserDraftJournal.prototype, 'put').mockResolvedValue(undefined)
+    vi.spyOn(BrowserDraftJournal.prototype, 'remove').mockResolvedValue(undefined)
     let resetSession = () => {}
     let mobile = false,
         store: ContributionStore | null = null
@@ -45,7 +49,11 @@ function mount() {
                                   signature: null,
                               },
                           }
-                        : [],
+                        : url.includes('/api/markers/viewport')
+                          ? Array.from({ length: clusterSize }, (_, index) =>
+                                syntheticPlace({ id: index + 1, lat: 31.2304, lng: 121.4737 }),
+                            )
+                          : [],
                 ),
                 { headers: { 'Content-Type': 'application/json' } },
             )
@@ -75,19 +83,55 @@ function mount() {
             }),
     }
 }
-it('resizing a desktop picker opens a phone draft at the current map center without remounting the map', async () => {
+it('does not choose the map center when a desktop picker becomes a phone picker', async () => {
     const view = mount()
-    const map = view.container.querySelector('.leaflet-container')
+    await waitFor(() => expect(view.getStore().getSnapshot().owner).not.toBeNull())
+    const map = view.container.querySelector('.leaflet-container')!
     fireEvent.click(screen.getByRole('button', { name: 'Contribute' }))
-    expect(view.getStore().getSnapshot().point).toBeNull()
     view.phone()
-    await screen.findByRole('form', { name: 'Contribution draft' })
-    await waitFor(() => expect(view.getStore().getSnapshot().point).not.toBeNull())
+    expect(view.getStore().getSnapshot().point).toBeNull()
+    expect(screen.queryByRole('form', { name: 'Contribution draft' })).not.toBeInTheDocument()
+    expect(screen.getByText('Click on the map to add points.')).toBeInTheDocument()
     expect(view.container.querySelector('.leaflet-container')).toBe(map)
-    const point = view.getStore().getSnapshot().point
-    fireEvent.click(screen.getByRole('button', { name: 'Close contribution form' }))
+    fireEvent.click(map, { clientX: 180, clientY: 260 })
+    await screen.findByRole('form', { name: 'Contribution draft' })
+    expect(view.getStore().getSnapshot().point).not.toBeNull()
+})
+it('submits the phone map click coordinates and preserves them in the save receipt', async () => {
+    const view = mount(),
+        store = view.getStore()
+    await waitFor(() => expect(store.getSnapshot().owner).not.toBeNull())
+    const write = vi
+        .spyOn(writes, 'createMarker')
+        .mockImplementation(async (payload) =>
+            syntheticPlace({ ...payload, reviewStatus: 'PENDING' }),
+        )
+    view.phone()
     fireEvent.click(screen.getByRole('button', { name: 'Contribute' }))
-    expect(view.getStore().getSnapshot().point).toEqual(point)
+    expect(store.getSnapshot().point).toBeNull()
+    fireEvent.click(view.container.querySelector('.product-map')!, { clientX: 190, clientY: 290 })
+    const selected = store.getSnapshot().point!
+    expect(selected).not.toEqual({ lat: 31.2304, lng: 121.4737 })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), {
+        target: { value: '所选位置' },
+    })
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Accessible Toilets' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
+    await waitFor(() => expect(write).toHaveBeenCalledTimes(1))
+    expect(write.mock.calls[0]![0]).toMatchObject({ ...selected, title: '所选位置' })
+    await screen.findByRole('button', { name: 'View place' })
+    expect(store.getSnapshot().saved).toMatchObject(selected)
+})
+it('keeps map selection active when tapping an overlapping marker cluster', async () => {
+    const view = mount(12)
+    await waitFor(() => expect(view.getStore().getSnapshot().owner).not.toBeNull())
+    const cluster = await screen.findByRole('button', { name: '12 places' })
+    view.phone()
+    fireEvent.click(screen.getByRole('button', { name: 'Contribute' }))
+    fireEvent.click(cluster)
+    expect(screen.getByText('Click on the map to add points.')).toBeInTheDocument()
+    expect(screen.queryByRole('form', { name: 'Contribution draft' })).not.toBeInTheDocument()
+    expect(view.getStore().getSnapshot().point).toBeNull()
 })
 it('reopens the same submitting form from Contribute, without creating another request', async () => {
     const view = mount(),
@@ -105,7 +149,7 @@ it('reopens the same submitting form from Contribute, without creating another r
     fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), {
         target: { value: 'Synthetic' },
     })
-    fireEvent.click(screen.getByRole('radio', { name: 'Accessible Toilets' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Accessible Toilets' }))
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
     await waitFor(() => expect(write).toHaveBeenCalledTimes(1))
     fireEvent.click(screen.getByRole('button', { name: 'Close contribution form' }))
@@ -118,16 +162,20 @@ it('reopens the same submitting form from Contribute, without creating another r
     expect(await screen.findByRole('button', { name: 'View place' })).toHaveFocus()
     expect(write).toHaveBeenCalledTimes(1)
 })
-it('clears a switched account draft while keeping the open phone form able to choose its map center', async () => {
+it('returns to map selection when an account change clears the selected point', async () => {
     const view = mount()
     await waitFor(() => expect(view.getStore().getSnapshot().owner).not.toBeNull())
     view.phone()
     fireEvent.click(screen.getByRole('button', { name: 'Contribute' }))
+    fireEvent.click(view.container.querySelector('.product-map')!, { clientX: 180, clientY: 260 })
     fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), {
         target: { value: 'Old private draft' },
     })
     view.resetSession()
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Title' })).toHaveValue(''))
-    expect(view.getStore().getSnapshot().point).not.toBeNull()
+    await waitFor(() =>
+        expect(screen.getByText('Click on the map to add points.')).toBeInTheDocument(),
+    )
+    expect(screen.queryByRole('form', { name: 'Contribution draft' })).not.toBeInTheDocument()
+    expect(view.getStore().getSnapshot().point).toBeNull()
     expect(view.getStore().getSnapshot().draft.photo).toBeNull()
 })

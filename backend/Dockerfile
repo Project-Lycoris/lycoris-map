@@ -16,7 +16,7 @@ ENV SQLX_OFFLINE=true \
 
 WORKDIR /app
 # 只复制构建/测试真正需要的文件，不从上下文带入 uploads/.env/target/备份。
-COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY Cargo.toml Cargo.lock rust-toolchain.toml build.rs ./
 COPY src ./src
 COPY queries ./queries
 COPY migrations ./migrations

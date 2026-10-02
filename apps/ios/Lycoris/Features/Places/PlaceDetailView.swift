@@ -16,9 +16,11 @@ struct PlaceDetailView: View {
   var authenticatedPhoto = false
   var photo: Data? = nil
   var photoFailed = false
+  var loadPrivatePhoto: ((URL) async throws -> Data)? = nil
   var reportsContentHeight = true
   var onContentHeight: (CGFloat) -> Void = { _ in }
   let onUnavailableAction: () -> Void
+  @State private var photoIndex = 0
   @AccessibilityFocusState private var titleFocused: Bool
   @ScaledMetric(relativeTo: .body) private var buttonHeight: CGFloat = 48
 
@@ -60,6 +62,12 @@ struct PlaceDetailView: View {
           }
         }
 
+        if !hasFailed, place.categories.count > 1 {
+          ViewThatFits(in: .horizontal) {
+            HStack { facilityTags }
+            VStack(alignment: .leading) { facilityTags }
+          }
+        }
         if state == .loading || hasFailed {
           PlaceLoadStatus(state: state, spacing: 11, horizontalInset: 0, retry: onRetry)
         }
@@ -77,14 +85,31 @@ struct PlaceDetailView: View {
           if let reference = place.distanceReference {
             Text(reference).font(.caption).foregroundStyle(.secondary)
           }
+          if let note = place.openingHoursNote, !note.isEmpty {
+            Text(note).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+          }
           if !place.description.isEmpty {
             Text(place.description).font(.subheadline).foregroundStyle(.secondary)
               .fixedSize(horizontal: false, vertical: true)
           }
           if place.hasPhoto {
             PlacePhoto(
-              place: place, authenticated: authenticatedPhoto, data: photo, photoFailed: photoFailed
+              place: galleryPlace, authenticated: authenticatedPhoto, data: photo,
+              photoFailed: photoFailed, loadPrivatePhoto: loadPrivatePhoto
             )
+            if place.imageURLs.count > 1 {
+              HStack {
+                Button("Previous photo", systemImage: "chevron.left") { photoIndex -= 1 }.disabled(
+                  photoIndex == 0
+                ).labelStyle(.iconOnly)
+                Spacer()
+                Text("\(photoIndex + 1) / \(place.imageURLs.count)").font(.caption)
+                Spacer()
+                Button("Next photo", systemImage: "chevron.right") { photoIndex += 1 }.disabled(
+                  photoIndex >= place.imageURLs.count - 1
+                ).labelStyle(.iconOnly)
+              }
+            }
           }
 
           let actionLayout =
@@ -134,7 +159,26 @@ struct PlaceDetailView: View {
     .scrollIndicators(.hidden)
     .ignoresSafeArea(.container, edges: .bottom)
     .accessibilityIdentifier("place.details")
-    .task(id: place.id) { titleFocused = true }
+    .task(id: place.id) {
+      titleFocused = true
+      photoIndex = 0
+    }
+  }
+
+  private var galleryPlace: PlacePresentation {
+    var value = place
+    if !place.imageURLs.isEmpty {
+      value.imageURL = place.imageURLs[min(photoIndex, place.imageURLs.count - 1)]
+    }
+    return value
+  }
+  private var facilityTags: some View {
+    ForEach(place.categories, id: \.self) { category in
+      Text(category.title).font(.caption.weight(.medium)).padding(.horizontal, 10).padding(
+        .vertical, 5
+      )
+      .background(Color(category.tint).opacity(0.18), in: Capsule())
+    }
   }
 
   private var hasFailed: Bool {

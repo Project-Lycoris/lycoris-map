@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT last_deactivated_version FROM map_markers WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "last_deactivated_version",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "last_deactivated_version"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3a708649fccd680c9077e27959d08491464fd99cafb30039381a26cd0534c7f1"
+}
