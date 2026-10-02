@@ -24,7 +24,7 @@ final class PlaceStore {
     guard case .search = browse, let category = searchType.category else {
       return unfilteredResults
     }
-    return unfilteredResults.filter { $0.category == category }
+    return unfilteredResults.filter { $0.facilityCategories.contains(category) }
   }
   private(set) var browse: Browse?
   private(set) var pendingNearby: PlaceCategory?

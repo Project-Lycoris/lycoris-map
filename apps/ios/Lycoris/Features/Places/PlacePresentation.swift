@@ -23,13 +23,19 @@ struct PlacePresentation: Identifiable, Equatable, Sendable {
   /// The original server `HH:mm` values, echoed into the editor when valid.
   var rawStart: String? = nil
   var rawEnd: String? = nil
+  var openingHoursNote: String? = nil
+  var categories: [PlaceCategory] = []
+  var imageURLs: [URL] = []
 
   var point: GeoPoint? { GeoPoint(latitude: latitude, longitude: longitude) }
   var hasPhoto: Bool { photoAsset != nil || imageURL != nil }
 
   /// The real-time status for the given instant, computed from the server zone.
   func openingStatus(at now: Date) -> OpeningStatus {
-    OpeningStatusEngine.status(
+    if openingHoursNote?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+      return .scheduled
+    }
+    return OpeningStatusEngine.status(
       start: rawStart, end: rawEnd, timeZone: hoursTimezone, now: now)
   }
 
@@ -43,9 +49,16 @@ struct PlacePresentation: Identifiable, Equatable, Sendable {
     description = marker.description ?? ""
     photoAsset = nil
     imageURL = Self.imageURL(marker.markImage, baseURL: baseURL)
+    imageURLs = (marker.photos ?? []).compactMap { Self.imageURL($0.url, baseURL: baseURL) }
+    if imageURLs.isEmpty, let imageURL { imageURLs = [imageURL] }
+    categories = marker.facilityCategories
+    openingHoursNote = marker.openingHoursNote
     rawStart = marker.openTimeStart
     rawEnd = marker.openTimeEnd
-    openingHours = Self.hours(start: marker.openTimeStart, end: marker.openTimeEnd)
+    openingHours =
+      marker.openingHoursNote?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+      ? String(appLocalized: "See opening hours note")
+      : Self.hours(start: marker.openTimeStart, end: marker.openTimeEnd)
     venueRaw = marker.venueType
     venue = marker.venue
     hoursTimezone = marker.hoursTimezone

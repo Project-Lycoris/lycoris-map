@@ -6,6 +6,8 @@ enum AccountDestination: Hashable { case profile, password, bookmarks, created }
 struct AccountSheet: View {
   @Bindable var store: AccountStore
   var destination: AccountDestination = .profile
+  var contributions: ContributionStore? = nil
+  var onDraft: (UUID) -> Void = { _ in }
   var onAuthenticated: () -> Void = {}
   let onSelect: (Marker) -> Void
   @Environment(\.dismiss) private var dismiss
@@ -36,7 +38,10 @@ struct AccountSheet: View {
       case .profile: ProfileView(store: store, user: user)
       case .password: PasswordView(store: store)
       case .bookmarks, .created:
-        AccountPlacesView(store: store, created: destination == .created) { marker in
+        AccountPlacesView(
+          store: store, created: destination == .created, contributions: contributions,
+          onDraft: onDraft
+        ) { marker in
           dismiss()
           onSelect(marker)
         }
@@ -240,10 +245,42 @@ private struct PasswordView: View {
 struct AccountPlacesView: View {
   @Bindable var store: AccountStore
   let created: Bool
+  var contributions: ContributionStore? = nil
+  var onDraft: (UUID) -> Void = { _ in }
   let onSelect: (Marker) -> Void
   private var places: [Marker] { created ? store.created : store.bookmarks }
   var body: some View {
     List {
+      if created, let contributions {
+        Section("Drafts") {
+          ForEach(contributions.drafts) { draft in
+            Button {
+              onDraft(draft.id)
+            } label: {
+              VStack(alignment: .leading) {
+                Text(
+                  draft.fields.title.isEmpty
+                    ? String(appLocalized: "Untitled place") : draft.fields.title)
+                if let date = contributions.modifiedAt(draft.id) {
+                  Text(date, format: .dateTime.year().month().day().hour().minute())
+                    .font(.caption).foregroundStyle(.secondary)
+                }
+                Text("Continue").font(.caption).foregroundStyle(.secondary)
+              }
+            }.disabled(contributions.isWorking)
+              .swipeActions {
+                Button("Delete draft", role: .destructive) {
+                  do { try contributions.deleteDraft(draft.id) } catch {
+                    store.message = String(
+                      appLocalized: "Could not save the contribution on this device.")
+                  }
+                }.disabled(contributions.isWorking)
+              }
+          }
+          Text("Drafts are saved on this device only.").font(.caption).foregroundStyle(.secondary)
+          if let message = contributions.message { Text(message) }
+        }
+      }
       if store.libraryLoading { ProgressView() }
       if let message = store.message, message != store.libraryMessage {
         Text(message).accessibilityIdentifier("account.message")
@@ -281,7 +318,10 @@ struct AccountPlacesView: View {
       }
     }
     .navigationTitle(created ? "My Places" : "Bookmarks").navigationBarTitleDisplayMode(.inline)
-    .onAppear { store.message = nil }
+    .onAppear {
+      store.message = nil
+      contributions?.refreshDrafts()
+    }
     .refreshable { await store.loadLibrary() }
   }
 

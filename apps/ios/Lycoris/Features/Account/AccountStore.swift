@@ -413,7 +413,7 @@ final class AccountStore {
           AccountRequest(path: "api/markers/\(marker.id)", query: ["lang": language]))
         let current = try JSONDecoder().decode(Marker.self, from: data)
         guard current.id == marker.id, current.point != nil else {
-          throw AccountFailure(status: 502)
+          throw PlaceFailure.invalidResponse
         }
         guard matches(owner, token), generation == detailGeneration else { return }
         selectedMarker = current
@@ -439,10 +439,36 @@ final class AccountStore {
           created.removeAll { $0.id == marker.id }
           reloadLibrary()
         }
-        detailState = .failed(
-          (error as? AccountFailure)?.status == 404 ? .unavailable : .requestFailed)
+        if error is CancellationError || (error as? URLError)?.code == .cancelled { return }
+        let failure: PlaceFailure
+        if let known = error as? PlaceFailure {
+          failure = known
+        } else if error is DecodingError {
+          failure = .invalidResponse
+        } else if let transport = error as? URLError {
+          failure = transport.code == .timedOut ? .timeout : .network
+        } else if let response = error as? AccountFailure {
+          failure = .http(response.status)
+        } else {
+          failure = .requestFailed
+        }
+        detailState = .failed(failure)
       }
     }
+  }
+
+  func placePhoto(_ url: URL) async throws -> Data {
+    guard let owner = user?.publicId, let marker = selectedMarker,
+      url == PlacePresentation.imageURL(marker.markImage, baseURL: baseURL)
+        || (marker.photos ?? []).contains(where: {
+          PlacePresentation.imageURL($0.url, baseURL: baseURL) == url
+        })
+    else { throw AccountFailure(status: 404) }
+    let token = epoch
+    let generation = detailGeneration
+    let bytes = try await api.send(AccountRequest(path: String(url.path.dropFirst())))
+    guard matches(owner, token), generation == detailGeneration else { throw CancellationError() }
+    return bytes
   }
 
   func closeDetail() {

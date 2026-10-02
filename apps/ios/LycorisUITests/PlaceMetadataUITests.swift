@@ -172,31 +172,41 @@ private enum WriteWaitError: Error { case missingWrite }
     app.buttons["Mall"].tap()
     XCTAssertEqual(picker.value as? String, "Mall")
 
-    // Switching to a non-toilet hides the Picker; back returns the other
-    // default with no stale tag.
-    let category = app.buttons["contribution.category"]
-    category.tap()
-    app.buttons["Nursing Rooms"].tap()
-    XCTAssertFalse(app.buttons["contribution.venue"].exists)
-    category.tap()
-    app.buttons["Accessible Toilets"].tap()
-    XCTAssertTrue(app.buttons["contribution.venue"].waitForExistence(timeout: 5))
-    XCTAssertEqual(app.buttons["contribution.venue"].value as? String, "Other")
-
-    // Choose a new venue and submit the proposal, then confirm the serialized
-    // payload through the fixture's recorded writes.
-    app.buttons["contribution.venue"].tap()
-    app.buttons["Public toilet"].tap()
+    // Supplementary toilets retain their venue even when nursing is primary.
+    let nursing = app.switches["contribution.category.baby_room"]
+    nursing.switches.firstMatch.tap()
+    XCTAssertEqual(nursing.value as? String, "1")
+    app.buttons["contribution.primary.baby_room"].tap()
+    XCTAssertEqual(picker.value as? String, "Mall")
+    let toilet = app.switches["contribution.category.accessible_toilet"]
+    toilet.switches.firstMatch.tap()
+    XCTAssertFalse(picker.exists)
+    toilet.switches.firstMatch.tap()
+    XCTAssertTrue(picker.waitForExistence(timeout: 5))
+    picker.tap()
+    app.buttons["Park"].tap()
+    XCTAssertEqual(picker.value as? String, "Park")
+    let note = app.descendants(matching: .any)["contribution.hours-note"]
+    for _ in 0..<8 {
+      if note.isHittable { break }
+      app.swipeUp()
+    }
+    XCTAssertTrue(note.isHittable)
+    fill(note, "Closed Mondays; 12:00-14:00 break")
     attach(app, "metadata-editor-before-submit")
     app.buttons["contribution.submit"].tap()
     XCTAssertTrue(app.staticTexts["contribution.complete"].waitForExistence(timeout: 20))
     let write = try await waitForWrite(method: "PATCH", id: 21)
-    XCTAssertEqual(write["venueType"] as? String, "public_toilet")
+    XCTAssertEqual(write["venueType"] as? String, "park")
+    XCTAssertEqual(write["categories"] as? [String], ["baby_room", "accessible_toilet"])
+    XCTAssertEqual(write["category"] as? String, "baby_room")
+    XCTAssertEqual(write["openingHoursNote"] as? String, "Closed Mondays; 12:00-14:00 break")
+    XCTAssertEqual(write["language"] as? String, "zh")
     // The fixture's published point is unchanged while the edit waits review.
     XCTAssertEqual(write["title"] as? String, "Metro Accessible Toilet")
   }
 
-  func testNewToiletOffersAllEightVenues() async throws {
+  func testNewToiletOffersAllNineVenues() async throws {
     try await resetFixture()
     let app = launch(now: "2026-09-20T03:00:00Z")
     signInViaContribute(app)
@@ -207,7 +217,8 @@ private enum WriteWaitError: Error { case missingWrite }
     XCTAssertEqual(picker.value as? String, "Other")
     picker.tap()
     for venue in [
-      "Metro", "Hospital", "Mall", "Railway station", "School", "Airport", "Public toilet", "Other",
+      "Metro", "Hospital", "Mall", "Railway station", "School", "Airport", "Public toilet", "Park",
+      "Other",
     ] {
       XCTAssertTrue(app.buttons[venue].waitForExistence(timeout: 3), venue)
     }

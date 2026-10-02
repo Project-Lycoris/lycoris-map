@@ -36,6 +36,7 @@ struct MapScreen: View {
   @State private var pendingBookmark: Int64?
   @State private var bookmarkIntent = UUID()
   @State private var showsAccountError = false
+  @State private var dismissedPlaceFailure: PlaceFailure?
   @Environment(\.scenePhase) private var scenePhase
   /// One shared clock for every place's real-time opening status. All rows,
   /// details and sheets read this instead of each starting their own timer.
@@ -44,6 +45,12 @@ struct MapScreen: View {
   @State private var showsNavigationError = false
   private var selectedPlace: PlacePresentation? {
     account.selectedMarker.map { store.presentation($0) } ?? store.selectedPlace
+  }
+  private var placeFailure: PlaceFailure? {
+    for state in [account.detailState, store.detailState, store.resultsState, store.viewportState] {
+      if case .failed(let failure) = state { return failure }
+    }
+    return nil
   }
   private var mapPlaces: [PlacePresentation] {
     if account.detailState == .failed(.unavailable), let removed = account.selectedMarker {
@@ -107,17 +114,21 @@ struct MapScreen: View {
       )
       let adaptive = AdaptiveMapLayout(size: layout.viewport)
       let sidebarTop = max(layout.topInset, 12) + 8
-      let sidebarHeight = max(120, layout.viewport.height - sidebarTop
-        - max(layout.bottomInset + 12, keyboardHeight + 12))
+      let sidebarHeight = max(
+        120,
+        layout.viewport.height - sidebarTop
+          - max(layout.bottomInset + 12, keyboardHeight + 12))
       let panelTop = layout.clampedTop(layout.top(for: detent) + dragTranslation)
       let panelHeight = layout.height(at: panelTop)
       let panelShape = UnevenRoundedRectangle(
         topLeadingRadius: 26, bottomLeadingRadius: layout.bottomCornerRadius(at: panelTop),
         bottomTrailingRadius: layout.bottomCornerRadius(at: panelTop), topTrailingRadius: 26)
-      let toolsVisible = !selectingLocation
+      let toolsVisible =
+        !selectingLocation
         && (adaptive.usesSidebar || (panelTop > layout.topInset + 270 && !isSearchFocused))
       // Keep attribution fixed above the panel's lowest resting position.
-      let mapBottomInset = adaptive.usesSidebar
+      let mapBottomInset =
+        adaptive.usesSidebar
         ? max(layout.bottomInset + 12, keyboardHeight + 12)
         : layout.viewport.height - layout.collapsedTop + 10
       let showsUserLocation =
@@ -127,7 +138,8 @@ struct MapScreen: View {
       ZStack(alignment: .topLeading) {
         NativeMapView(
           topInset: layout.topInset, bottomInset: mapBottomInset,
-          leftInset: selectingLocation ? 10
+          leftInset: selectingLocation
+            ? 10
             : adaptive.leadingOcclusion(contentVisible: sidebarContentVisible),
           rightInset: adaptive.usesSidebar ? 80 : 10,
           appearance: preferences.mapAppearance,
@@ -153,9 +165,12 @@ struct MapScreen: View {
           showMapAppearance: { modal = .mapAppearance(screenCenter) },
           appearanceTransition: appearanceTransition
         )
-        .position(x: layout.viewport.width - 40,
-                  y: adaptive.usesSidebar ? layout.topInset + 120
-                    : panelTop - (selectedPlace == nil ? 131.5 : 116))
+        .position(
+          x: layout.viewport.width - 40,
+          y: adaptive.usesSidebar
+            ? layout.topInset + 120
+            : panelTop - (selectedPlace == nil ? 131.5 : 116)
+        )
         .opacity(toolsVisible ? 1 : 0)
         .allowsHitTesting(toolsVisible)
         .accessibilityHidden(!toolsVisible)
@@ -175,12 +190,20 @@ struct MapScreen: View {
             },
             onBookmarks: { openSidebar(.bookmarks) },
             onContribute: { beginContribution(.create) },
-            onSettings: { isSearchFocused = false; modal = .settingsHome },
-            onAccount: { isSearchFocused = false; modal = .account(.profile) }
+            onSettings: {
+              isSearchFocused = false
+              modal = .settingsHome
+            },
+            onAccount: {
+              isSearchFocused = false
+              modal = .account(.profile)
+            }
           )
           .frame(width: adaptive.navigationWidth, height: sidebarHeight)
-          .position(x: adaptive.spacing + adaptive.navigationWidth / 2,
-                    y: sidebarTop + sidebarHeight / 2)
+          .position(
+            x: adaptive.spacing + adaptive.navigationWidth / 2,
+            y: sidebarTop + sidebarHeight / 2
+          )
           .opacity(selectingLocation ? 0 : 1)
           .disabled(selectingLocation)
           .allowsHitTesting(!selectingLocation)
@@ -190,9 +213,16 @@ struct MapScreen: View {
             sidebarContent
               .frame(width: adaptive.contentWidth, height: sidebarHeight)
               .clipShape(RoundedRectangle(cornerRadius: 26))
-              .modifier(MapPanelSurface(shape: UnevenRoundedRectangle(cornerRadii: .init(topLeading: 26, bottomLeading: 26, bottomTrailing: 26, topTrailing: 26))))
-              .position(x: adaptive.spacing * 2 + adaptive.navigationWidth + adaptive.contentWidth / 2,
-                        y: sidebarTop + sidebarHeight / 2)
+              .modifier(
+                MapPanelSurface(
+                  shape: UnevenRoundedRectangle(
+                    cornerRadii: .init(
+                      topLeading: 26, bottomLeading: 26, bottomTrailing: 26, topTrailing: 26)))
+              )
+              .position(
+                x: adaptive.spacing * 2 + adaptive.navigationWidth + adaptive.contentWidth / 2,
+                y: sidebarTop + sidebarHeight / 2
+              )
               .opacity(selectingLocation ? 0 : 1)
               .disabled(selectingLocation)
               .allowsHitTesting(!selectingLocation)
@@ -274,9 +304,10 @@ struct MapScreen: View {
   /// expression grows beyond what the type-checker can handle.
   private var mapPresentations: some View {
     mapSurface
-    .ignoresSafeArea(.keyboard)
-    .sensoryFeedback(.selection, trigger: locationPickFeedback)
-    .alert(Text("Map unavailable", tableName: "Coordinates"), isPresented: $showsCoordinateError) {
+      .ignoresSafeArea(.keyboard)
+      .sensoryFeedback(.selection, trigger: locationPickFeedback)
+      .alert(Text("Map unavailable", tableName: "Coordinates"), isPresented: $showsCoordinateError)
+    {
       Button("Try again") { mapCoordinates.resolveIfNeeded(retryPending: true) }
       Button("Cancel", role: .cancel) {}
     } message: {
@@ -290,226 +321,248 @@ struct MapScreen: View {
           tableName: "Coordinates")
       }
     }
-    .alert("Not available yet", isPresented: $showsUnavailableAction) {
-      Button("OK", role: .cancel) {}
-    }
-    .alert("Location unavailable", isPresented: $showsLocationError) {
-      if locationDenied {
-        Button("Open Settings") { openURL(URL(string: UIApplication.openSettingsURLString)!) }
-      } else {
-        Button("Try again", action: locate)
+      .alert("Not available yet", isPresented: $showsUnavailableAction) {
+        Button("OK", role: .cancel) {}
       }
-      Button("Cancel", role: .cancel) {}
-    } message: {
-      Text(
-        locationDenied
-          ? "You can browse the map without location access. To use your location, enable it in Settings and try again."
-          : "Could not get your location. You can try again or browse around the map center.")
-    }
-    .alert("Could not open Apple Maps", isPresented: $showsNavigationError) {
-      Button("OK", role: .cancel) {}
-    }
-    .sheet(
-      item: $modal,
-      onDismiss: {
-        pendingBookmark = nil
-        bookmarkIntent = UUID()
-        contributionIntent = nil
-        if let intent = queuedContribution {
-          queuedContribution = nil
-          beginContribution(intent)
-        } else if chooseLocationAfterDismiss {
-          chooseLocationAfterDismiss = false
-          enterLocationSelection(at: contribution.draft?.point)
+      .alert("Location unavailable", isPresented: $showsLocationError) {
+        if locationDenied {
+          Button("Open Settings") { openURL(URL(string: UIApplication.openSettingsURLString)!) }
+        } else {
+          Button("Try again", action: locate)
         }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text(
+          locationDenied
+            ? "You can browse the map without location access. To use your location, enable it in Settings and try again."
+            : "Could not get your location. You can try again or browse around the map center.")
       }
-    ) { item in
-      switch item {
-      case .share(let place): PlaceShareSheet(place: place)
-      case .settingsHome: SettingsHomeSheet(preferences: preferences)
-      case .settings(let destination):
-        SettingsSheet(preferences: preferences, destination: destination)
-      case .mapAppearance(let center):
-        MapAppearanceSheet(
-          preferences: preferences, center: center, coordinateSpace: mapCoordinates.space
-        )
-        .navigationTransition(.zoom(sourceID: "map-appearance", in: appearanceTransition))
-      case .link(let link):
-        PlaceLinkSheet(link: link, account: account) { marker, authenticated in
-          guard case .link(let current) = modal, current == link else { return }
-          modal = nil
-          if authenticated {
-            selectAccountPlace(marker)
-          } else {
-            selectPlace(store.presentation(marker))
+      .alert("Could not open Apple Maps", isPresented: $showsNavigationError) {
+        Button("OK", role: .cancel) {}
+      }
+      .sheet(
+        item: $modal,
+        onDismiss: {
+          pendingBookmark = nil
+          bookmarkIntent = UUID()
+          contributionIntent = nil
+          if let intent = queuedContribution {
+            queuedContribution = nil
+            beginContribution(intent)
+          } else if chooseLocationAfterDismiss {
+            chooseLocationAfterDismiss = false
+            enterLocationSelection(at: contribution.draft?.point)
           }
         }
-      case .account(let destination):
-        AccountSheet(
-          store: account, destination: destination, onAuthenticated: resumeAuthenticatedAction,
-          onSelect: selectAccountPlace)
-      case .contribution(let editID):
-        ContributionSheet(store: contribution, editID: editID) {
-          chooseLocationAfterDismiss = true
-          modal = nil
+      ) { item in
+        switch item {
+        case .share(let place): PlaceShareSheet(place: place)
+        case .settingsHome: SettingsHomeSheet(preferences: preferences)
+        case .settings(let destination):
+          SettingsSheet(preferences: preferences, destination: destination)
+        case .mapAppearance(let center):
+          MapAppearanceSheet(
+            preferences: preferences, center: center, coordinateSpace: mapCoordinates.space
+          )
+          .navigationTransition(.zoom(sourceID: "map-appearance", in: appearanceTransition))
+        case .link(let link):
+          PlaceLinkSheet(link: link, account: account) { marker, authenticated in
+            guard case .link(let current) = modal, current == link else { return }
+            modal = nil
+            if authenticated {
+              selectAccountPlace(marker)
+            } else {
+              selectPlace(store.presentation(marker))
+            }
+          }
+        case .account(let destination):
+          AccountSheet(
+            store: account, destination: destination, contributions: contribution,
+            onDraft: { id in
+              do {
+                try contribution.openDraft(id)
+                modal = .contribution(editID: nil)
+              } catch {
+                contributionError = String(appLocalized: "Could not read the saved contribution.")
+              }
+            }, onAuthenticated: resumeAuthenticatedAction,
+            onSelect: selectAccountPlace)
+        case .contribution(let editID):
+          ContributionSheet(store: contribution, editID: editID) {
+            chooseLocationAfterDismiss = true
+            modal = nil
+          }
         }
       }
-    }
-    .alert("Account", isPresented: $showsAccountError) {
-      Button("OK", role: .cancel) {}
-    } message: {
-      Text(account.message ?? "")
-    }
-    .alert(
-      "Contribute",
-      isPresented: Binding(
-        get: { contributionError != nil }, set: { if !$0 { contributionError = nil } })
-    ) {
-      Button("OK", role: .cancel) { contributionError = nil }
-    } message: {
-      Text(contributionError ?? "")
-    }
-    .onOpenURL { url in
-      guard let link = PlaceLink(url: url), modal == nil, !selectingLocation else {
-        linkError = true
-        return
+      .overlay(alignment: .top) {
+        if let failure = placeFailure, dismissedPlaceFailure != failure {
+          HStack(alignment: .top, spacing: 11) {
+            Text(failure.message).font(.subheadline).frame(maxWidth: .infinity, alignment: .leading)
+            Button("Close", systemImage: "xmark") { dismissedPlaceFailure = failure }.labelStyle(
+              .iconOnly)
+          }.padding(16).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+            .padding(.horizontal, 22).padding(.top, 8).accessibilityIdentifier(
+              "places.error-notice")
+        }
       }
-      isSearchFocused = false
-      modal = .link(link)
-    }
-    .alert("Could not open place link", isPresented: $linkError) {
-      Button("OK", role: .cancel) {}
-    } message: {
-      Text("Check the link and close any open sheet before trying again.")
-    }
+      .onChange(of: placeFailure) { _, _ in dismissedPlaceFailure = nil }
+      .alert("Account", isPresented: $showsAccountError) {
+        Button("OK", role: .cancel) {}
+      } message: {
+        Text(account.message ?? "")
+      }
+      .alert(
+        "Contribute",
+        isPresented: Binding(
+          get: { contributionError != nil }, set: { if !$0 { contributionError = nil } })
+      ) {
+        Button("OK", role: .cancel) { contributionError = nil }
+      } message: {
+        Text(contributionError ?? "")
+      }
+      .onOpenURL { url in
+        guard let link = PlaceLink(url: url), modal == nil, !selectingLocation else {
+          linkError = true
+          return
+        }
+        isSearchFocused = false
+        modal = .link(link)
+      }
+      .alert("Could not open place link", isPresented: $linkError) {
+        Button("OK", role: .cancel) {}
+      } message: {
+        Text("Check the link and close any open sheet before trying again.")
+      }
   }
 
   private var mapLifecycle: some View {
     mapPresentations
-    .onChange(of: preferences.language) { _, _ in
-      cancelVoiceSearch()
-      applyPreferences()
-    }
-    .onChange(of: preferences.radius) { _, _ in applyPreferences() }
-    .onChange(of: preferences.searchType) { _, _ in applyPreferences() }
-    .onChange(of: location.isAuthorized) { _, authorized in
-      if !authorized {
-        store.revokeLocation()
-        awaitsLocationAuthorization = location.hasRequestedLocation
-      } else {
-        requestStartupLocation()
-      }
-    }
-    .task {
-      applyPreferences()
-      requestStartupLocation()
-      if !store.isPreview {
-        mapCoordinates.resolveIfNeeded()
-        connectivity.start()
-        contribution.connect(account)
-        await account.restore()
-        contribution.synchronize()
-      }
-    }
-    // A single minute-boundary clock for opening status. It restarts when the
-    // scene becomes active and refreshes immediately on return to foreground;
-    // it never triggers a network request or moves the map.
-    .task(id: scenePhase) {
-      await runMetadataClock()
-    }
-    .onChange(of: scenePhase) { _, phase in
-      if phase == .background
-        || (phase == .inactive && (voice.state == .recording || voice.state == .finishing))
-      {
+      .onChange(of: preferences.language) { _, _ in
         cancelVoiceSearch()
+        applyPreferences()
       }
-      guard !store.isPreview else { return }
-      contribution.setActive(phase == .active)
-      if phase == .active {
-        mapCoordinates.resolveIfNeeded(retryPending: true)
-        location.refreshAuthorization()
-        if !location.isAuthorized { store.revokeLocation() }
+      .onChange(of: preferences.radius) { _, _ in applyPreferences() }
+      .onChange(of: preferences.searchType) { _, _ in applyPreferences() }
+      .onChange(of: location.isAuthorized) { _, authorized in
+        if !authorized {
+          store.revokeLocation()
+          awaitsLocationAuthorization = location.hasRequestedLocation
+        } else {
+          requestStartupLocation()
+        }
+      }
+      .task {
+        applyPreferences()
         requestStartupLocation()
-        store.retryFailedRequests()
-        Task {
+        if !store.isPreview {
+          mapCoordinates.resolveIfNeeded()
+          connectivity.start()
+          contribution.connect(account)
           await account.restore()
           contribution.synchronize()
         }
       }
-    }
-    .onChange(of: connectivity.recoveryCount) { _, _ in
-      guard !store.isPreview, scenePhase == .active else { return }
-      mapCoordinates.resolveIfNeeded(retryPending: true)
-      store.networkDidRecover()
-      Task {
-        await account.networkDidRecover()
+      // A single minute-boundary clock for opening status. It restarts when the
+      // scene becomes active and refreshes immediately on return to foreground;
+      // it never triggers a network request or moves the map.
+      .task(id: scenePhase) {
+        await runMetadataClock()
+      }
+      .onChange(of: scenePhase) { _, phase in
+        if phase == .background
+          || (phase == .inactive && (voice.state == .recording || voice.state == .finishing))
+        {
+          cancelVoiceSearch()
+        }
+        guard !store.isPreview else { return }
+        contribution.setActive(phase == .active)
+        if phase == .active {
+          mapCoordinates.resolveIfNeeded(retryPending: true)
+          location.refreshAuthorization()
+          if !location.isAuthorized { store.revokeLocation() }
+          requestStartupLocation()
+          store.retryFailedRequests()
+          Task {
+            await account.restore()
+            contribution.synchronize()
+          }
+        }
+      }
+      .onChange(of: connectivity.recoveryCount) { _, _ in
+        guard !store.isPreview, scenePhase == .active else { return }
+        mapCoordinates.resolveIfNeeded(retryPending: true)
+        store.networkDidRecover()
+        Task {
+          await account.networkDidRecover()
+          contribution.synchronize()
+        }
+      }
+      .onChange(of: account.epoch) { _, _ in
         contribution.synchronize()
+        if account.user == nil {
+          if sidebarDestination == .bookmarks { sidebarDestination = .search }
+          selectingLocation = false
+          pickedLocation = nil
+          chooseLocationAfterDismiss = false
+          if case .contribution = modal { modal = nil }
+        }
       }
-    }
-    .onChange(of: account.epoch) { _, _ in
-      contribution.synchronize()
-      if account.user == nil {
-        if sidebarDestination == .bookmarks { sidebarDestination = .search }
-        selectingLocation = false
-        pickedLocation = nil
-        chooseLocationAfterDismiss = false
-        if case .contribution = modal { modal = nil }
+      .onChange(of: account.user?.publicId) { old, new in
+        if old != nil, old != new {
+          selectingLocation = false
+          pickedLocation = nil
+          chooseLocationAfterDismiss = false
+          queuedContribution = nil
+          if case .contribution = modal { modal = nil }
+          if case .link = modal { modal = nil }
+        }
       }
-    }
-    .onChange(of: account.user?.publicId) { old, new in
-      if old != nil, old != new {
-        selectingLocation = false
-        pickedLocation = nil
-        chooseLocationAfterDismiss = false
-        queuedContribution = nil
-        if case .contribution = modal { modal = nil }
-        if case .link = modal { modal = nil }
+      .onChange(of: account.detailState) { _, state in
+        if state == .failed(.unavailable), let id = account.selectedMarker?.id {
+          store.removeUnavailable(id)
+        }
       }
-    }
-    .onChange(of: account.detailState) { _, state in
-      if state == .failed(.unavailable), let id = account.selectedMarker?.id {
-        store.removeUnavailable(id)
-      }
-    }
   }
 
   var body: some View {
     mapLifecycle
-    .onChange(of: query) { _, text in
-      if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-        account.closeDetail()
-        store.search(text)
-      } else if case .search = store.browse {
-        store.closeResults()
+      .onChange(of: query) { _, text in
+        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+          account.closeDetail()
+          store.search(text)
+        } else if case .search = store.browse {
+          store.closeResults()
+        }
       }
-    }
-    .onDisappear {
-      cancelVoiceSearch()
-      store.stop()
-      connectivity.stop()
-      mapCoordinates.stop()
-    }
-    .onChange(of: isSearchFocused) { _, focused in
-      if focused {
-        sidebarContentVisible = true
-        sidebarDestination = .search
+      .onDisappear {
         cancelVoiceSearch()
-        movePanel(to: .expanded)
+        store.stop()
+        connectivity.stop()
+        mapCoordinates.stop()
       }
-    }
-    .onChange(of: modal?.id) { _, modalID in
-      if modalID != nil { cancelVoiceSearch() }
-    }
-    .onChange(of: voice.transcript) { _, text in
-      if showsVoiceSearch { query = text }
-    }
-    .onChange(of: voice.state) { _, state in
-      if showsVoiceSearch && state == .ready { finishVoiceSearch() }
-    }
-    .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) {
+      .onChange(of: isSearchFocused) { _, focused in
+        if focused {
+          sidebarContentVisible = true
+          sidebarDestination = .search
+          cancelVoiceSearch()
+          movePanel(to: .expanded)
+        }
+      }
+      .onChange(of: modal?.id) { _, modalID in
+        if modalID != nil { cancelVoiceSearch() }
+      }
+      .onChange(of: voice.transcript) { _, text in
+        if showsVoiceSearch { query = text }
+      }
+      .onChange(of: voice.state) { _, state in
+        if showsVoiceSearch && state == .ready { finishVoiceSearch() }
+      }
+      .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification))
+    {
       _ in cancelVoiceSearch()
     }
-    .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)) {
+      .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification))
+    {
       notification in
       let raw = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
       if voice.state == .recording,
@@ -519,14 +572,14 @@ struct MapScreen: View {
         cancelVoiceSearch()
       }
     }
-    .background {
-      MapKeyboardObserver { height in
-        if keyboardHeight != height { keyboardHeight = height }
+      .background {
+        MapKeyboardObserver { height in
+          if keyboardHeight != height { keyboardHeight = height }
+        }
       }
-    }
-    .environment(\.locale, preferences.language.locale)
-    .environment(\.lycorisAppLanguage, preferences.language)
-    .environment(\.lycorisMetadataNow, metadataNow)
+      .environment(\.locale, preferences.language.locale)
+      .environment(\.lycorisAppLanguage, preferences.language)
+      .environment(\.lycorisMetadataNow, metadataNow)
   }
 
   /// Refreshes the shared opening-status clock on every minute boundary while
@@ -611,9 +664,13 @@ struct MapScreen: View {
   }
 
   private var sidebarTitle: Text {
-    if selectedPlace != nil { Text("Place details") }
-    else if sidebarDestination == .bookmarks { Text("Bookmarks") }
-    else { Text("Search", tableName: "AdaptiveMap") }
+    if selectedPlace != nil {
+      Text("Place details")
+    } else if sidebarDestination == .bookmarks {
+      Text("Bookmarks")
+    } else {
+      Text("Search", tableName: "AdaptiveMap")
+    }
   }
 
   private var sidebarContent: some View {
@@ -650,7 +707,10 @@ struct MapScreen: View {
         query: $query, focused: $isSearchFocused, height: max(44, searchHeight),
         onSubmit: { store.search(query, debounce: false) },
         user: account.user, avatar: account.avatar,
-        onAccount: { isSearchFocused = false; modal = .account(.profile) },
+        onAccount: {
+          isSearchFocused = false
+          modal = .account(.profile)
+        },
         onVoiceSearch: {
           switch VoiceSearchButtonState(isVoicePanelOpen: showsVoiceSearch, state: voice.state) {
           case .start: startVoiceSearch()
@@ -662,9 +722,14 @@ struct MapScreen: View {
         showsAccount: false
       ).padding(.horizontal, 11)
       if showsVoiceSearch {
-        VoiceSearchControls(voice: voice, onFinish: finishVoiceSearch, onRetry: startVoiceSearch,
-          onKeyboard: { cancelVoiceSearch(); isSearchFocused = true }, onCancel: cancelVoiceSearch)
-          .padding(.horizontal, 11)
+        VoiceSearchControls(
+          voice: voice, onFinish: finishVoiceSearch, onRetry: startVoiceSearch,
+          onKeyboard: {
+            cancelVoiceSearch()
+            isSearchFocused = true
+          }, onCancel: cancelVoiceSearch
+        )
+        .padding(.horizontal, 11)
       }
       if store.browse != nil || store.pendingNearby != nil {
         ScrollView {
@@ -686,40 +751,43 @@ struct MapScreen: View {
     .scrollDismissesKeyboard(.interactively)
   }
 
-  @ViewBuilder private func placeDetails(bottomInset: CGFloat, reportsContentHeight: Bool) -> some View {
+  @ViewBuilder private func placeDetails(bottomInset: CGFloat, reportsContentHeight: Bool)
+    -> some View
+  {
     if let selectedPlace {
-        PlaceDetailView(
-          place: selectedPlace, bottomInset: bottomInset,
-          state: account.selectedMarker == nil ? store.detailState : account.detailState,
-          onRetry: {
-            if let marker = account.selectedMarker {
-              account.select(marker)
-            } else {
-              store.retryDetail()
-            }
-          },
-          onShare: {
-            if store.isPreview {
-              showsUnavailableAction = true
-            } else {
-              modal = .share(selectedPlace)
-            }
-          },
-          onNavigate: { navigate(selectedPlace) },
-          onEdit: { if let id = Int64(selectedPlace.id) { beginContribution(.edit(id)) } },
-          isBookmarked: Int64(selectedPlace.id).map(account.isBookmarked) ?? false,
-          bookmarkBusy: account.isBusy || account.bookmarkStatusLoading,
-          onBookmark: { bookmark(selectedPlace) },
-          authenticatedPhoto: account.selectedMarker != nil,
-          photo: account.selectedPhoto, photoFailed: account.photoFailed,
-          reportsContentHeight: reportsContentHeight,
-          onContentHeight: { height in
-            // The panel narrows during a drag. Measure its resting full width,
-            // without feeding transient wrapping back into the drag geometry.
-            guard height > 0 else { return }
-            measuredDetail = (selectedPlace.id, height)
-          },
-          onUnavailableAction: { showsUnavailableAction = true })
+      PlaceDetailView(
+        place: selectedPlace, bottomInset: bottomInset,
+        state: account.selectedMarker == nil ? store.detailState : account.detailState,
+        onRetry: {
+          if let marker = account.selectedMarker {
+            account.select(marker)
+          } else {
+            store.retryDetail()
+          }
+        },
+        onShare: {
+          if store.isPreview {
+            showsUnavailableAction = true
+          } else {
+            modal = .share(selectedPlace)
+          }
+        },
+        onNavigate: { navigate(selectedPlace) },
+        onEdit: { if let id = Int64(selectedPlace.id) { beginContribution(.edit(id)) } },
+        isBookmarked: Int64(selectedPlace.id).map(account.isBookmarked) ?? false,
+        bookmarkBusy: account.isBusy || account.bookmarkStatusLoading,
+        onBookmark: { bookmark(selectedPlace) },
+        authenticatedPhoto: account.selectedMarker != nil,
+        photo: account.selectedPhoto, photoFailed: account.photoFailed,
+        loadPrivatePhoto: account.placePhoto,
+        reportsContentHeight: reportsContentHeight,
+        onContentHeight: { height in
+          // The panel narrows during a drag. Measure its resting full width,
+          // without feeding transient wrapping back into the drag geometry.
+          guard height > 0 else { return }
+          measuredDetail = (selectedPlace.id, height)
+        },
+        onUnavailableAction: { showsUnavailableAction = true })
     }
   }
 
@@ -727,8 +795,9 @@ struct MapScreen: View {
     VStack(spacing: 0) {
       grabberPlaceholder(layout: layout)
       if selectedPlace != nil {
-        placeDetails(bottomInset: layout.bottomInset,
-                     reportsContentHeight: dragTranslation == 0 && detent != .collapsed)
+        placeDetails(
+          bottomInset: layout.bottomInset,
+          reportsContentHeight: dragTranslation == 0 && detent != .collapsed)
       } else if sidebarDestination == .bookmarks && account.user != nil {
         NavigationStack {
           AccountPlacesView(store: account, created: false, onSelect: selectAccountPlace)

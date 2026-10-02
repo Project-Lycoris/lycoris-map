@@ -6,7 +6,7 @@ struct ContributionSheet: View {
   var editID: Int64? = nil
   var onPickLocation: () -> Void
   @Environment(\.dismiss) private var dismiss
-  @State private var photo: PhotosPickerItem?
+  @State private var photos: [PhotosPickerItem] = []
   @State private var photoLoading = false
   @State private var photoError: String?
   @State private var confirmsDiscard = false
@@ -35,20 +35,28 @@ struct ContributionSheet: View {
                   .frame(maxHeight: 200).accessibilityLabel("Selected photo")
               }
               if draft.editable || draft.photoRejected {
-                PhotosPicker(selection: $photo, matching: .images) {
+                PhotosPicker(
+                  selection: $photos, maxSelectionCount: draft.photoRejected ? 1 : nil,
+                  selectionBehavior: .ordered, matching: .images
+                ) {
                   Label(
-                    draft.photoID == nil ? "Upload Photo (Optional)" : "Replace photo",
+                    draft.photoRejected ? "Replace photo" : "Add photos",
                     systemImage: "photo")
                 }
                 .accessibilityIdentifier("contribution.photo")
                 .disabled(store.isWorking || photoLoading)
-                if draft.photoID != nil && draft.editable {
-                  Button("Remove photo", role: .destructive) {
-                    do {
-                      try store.removePhoto()
-                      photo = nil
-                    } catch { showPhotoError() }
-                  }.disabled(store.isWorking || photoLoading)
+                ForEach(Array(draft.remainingPhotos.enumerated()), id: \.element.id) {
+                  index, item in
+                  HStack {
+                    Text("\(index + 1)").monospacedDigit()
+                    Text("Selected photo")
+                    Spacer()
+                    if draft.editable {
+                      Button("Remove photo", role: .destructive) {
+                        do { try store.removeQueuedPhoto(item.id) } catch { showPhotoError() }
+                      }.disabled(store.isWorking || photoLoading)
+                    }
+                  }
                 }
               }
               if photoLoading { ProgressView("Preparing photo…") }
@@ -154,19 +162,29 @@ struct ContributionSheet: View {
         Text(
           "The previous submission may have succeeded. Resending can create a duplicate proposal.")
       }
-      .task(id: photo) {
-        guard let photo, let draftID = store.draft?.id else { return }
+      .task(id: photos) {
+        guard !photos.isEmpty, let draftID = store.draft?.id else { return }
         photoLoading = true
         photoError = nil
-        defer { photoLoading = false }
+        defer {
+          photoLoading = false
+          // A later picker visit must not import the previous selection again.
+          photos = []
+        }
         do {
-          guard let bytes = try await photo.loadTransferable(type: Data.self) else {
-            throw ContributionFailure.missingPhoto
+          for photo in photos {
+            guard let bytes = try await photo.loadTransferable(type: Data.self) else {
+              throw ContributionFailure.missingPhoto
+            }
+            try Task.checkCancellation()
+            let encoded = try AvatarEncoder.jpeg(from: bytes, maximumDimension: 2048)
+            guard draftID == store.draft?.id else { return }
+            if store.draft?.photoRejected == true {
+              try store.choosePhoto(encoded)
+            } else {
+              try store.addPhoto(encoded)
+            }
           }
-          try Task.checkCancellation()
-          let encoded = try AvatarEncoder.jpeg(from: bytes, maximumDimension: 2048)
-          guard draftID == store.draft?.id else { return }
-          try store.choosePhoto(encoded)
         } catch { if !Task.isCancelled { showPhotoError() } }
       }
     }
@@ -202,15 +220,36 @@ struct ContributionSheet: View {
         TextField("Title", text: field(\.title)).focused($focused)
           .submitLabel(.done).onSubmit { focused = false }
           .accessibilityIdentifier("contribution.title")
-        Picker("Category", selection: categorySelection()) {
-          ForEach(
-            PlaceCategory.allCases.filter { $0 != .other || draft.original?.category == .other },
-            id: \.self
-          ) { category in
-            Text(category.title).tag(category)
+        ForEach(PlaceCategory.allCases, id: \.self) { category in
+          HStack {
+            Toggle(
+              category.title,
+              isOn: Binding(
+                get: { draft.fields.selectedCategories.contains(category) },
+                set: { selected in
+                  var fields = draft.fields
+                  let values =
+                    selected
+                    ? fields.selectedCategories + [category]
+                    : fields.selectedCategories.filter { $0 != category }
+                  fields.selectCategories(values)
+                  store.update(fields)
+                })
+            ).accessibilityIdentifier("contribution.category.\(category.rawValue)")
+            if draft.fields.selectedCategories.contains(category),
+              draft.fields.selectedCategories.first != category
+            {
+              Button("Make primary") {
+                var fields = draft.fields
+                fields.selectCategories(
+                  [category] + fields.selectedCategories.filter { $0 != category })
+                store.update(fields)
+              }.font(.caption).buttonStyle(.borderless)
+                .accessibilityIdentifier("contribution.primary.\(category.rawValue)")
+            }
           }
-        }.accessibilityIdentifier("contribution.category")
-        if draft.fields.category == .toilet {
+        }
+        if draft.fields.selectedCategories.contains(.toilet) {
           Picker(
             selection: venueSelection(),
             label: Text(
@@ -254,6 +293,17 @@ struct ContributionSheet: View {
             store.update(fields)
           }
         }
+        TextField(
+          "Opening hours note",
+          text: Binding(
+            get: { draft.fields.openingHoursNote ?? "" },
+            set: { value in
+              var fields = draft.fields
+              fields.openingHoursNote = value
+              store.update(fields)
+            }), axis: .vertical
+        )
+        .lineLimit(2...5).accessibilityIdentifier("contribution.hours-note")
       } footer: {
         if !draft.fields.openTimeStart.isEmpty {
           Text("Matching opening and closing times mean open 24 hours.")

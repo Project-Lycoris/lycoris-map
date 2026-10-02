@@ -220,6 +220,22 @@
           }
         }
       }
+    },
+    "Park" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Park"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "公园"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
