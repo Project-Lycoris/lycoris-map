@@ -26,13 +26,25 @@ Axum handlers validate requests and identities, then call domain services and SQ
 
 The backend keeps original images and generated renditions under its upload directory. The Pages Worker uses private R2 and edge caches for delivery, but checks current access with the backend before serving cached bytes. It must not serve cached media when authorization fails. Map tiles use provider adapters; OSM Web/Android tiles go through the edge Worker, not Rust.
 
+## Place metadata and contributions
+
+`categories` is an ordered PostgreSQL array. Its first value remains the legacy `category` and sets the pin color; nearby and viewport filters match any member without duplicating places. A venue tag is valid whenever the types include an accessible toilet. `park` joins the existing venue values.
+
+`openingHoursNote` supplements the simple daily start/end times. Clients show “See opening hours note” when it is present instead of inferring opening status from free text. Omitted metadata fields preserve existing values on old-client edits; an explicit empty note clears it. Contributions always enter the Chinese source, with English synchronized manually.
+
+`marker_photos` stores the published album separately from image proposals. Approval appends a photo in submission order; `markImage` remains the first-photo cover for older clients. Legacy covers are migrated as the first entry. Every album image follows the same current visibility checks as the cover, including through the edge cache.
+
+Drafts stay on the device: IndexedDB on Web, protected files on iOS, and Room on Android. The list is partitioned by account (and API origin on native clients), with fields, coordinates, selected images, and retry receipts saved together. Switching accounts hides drafts without deleting them. Explicit deletion or confirmed completion removes a draft from the unfinished list.
+
+Place errors distinguish network, timeout, authentication, access, missing data, throttling, server, and parsing failures. A closable notice explains the failure without exposing a response body. Cancelled and superseded requests remain silent; failed viewport refreshes retain the last valid places.
+
 ## Boundaries to preserve
 
-- **Identity:** an opaque cookie identifies a Redis session. Password changes invalidate old sessions through `session_version`. Admin mutations also require the configured secondary verification. Client account epochs keep late responses from repopulating a previous user's private state.
+- **Identity:** an opaque cookie identifies a Redis session. Password changes invalidate old sessions through `session_version`. Admin requests check the current database role; account login is the only credential required. Client account epochs keep late responses from repopulating a previous user's private state.
 - **Email codes:** registration and password recovery use separate, single-use challenges. Redis atomically enforces expiry, resend quotas, and the shared one-hour lock after five wrong codes. SMTP credentials stay on the backend.
 - **Coordinates:** storage, API requests, and contribution drafts use WGS84. Convert only at a provider's rendering, picking, or navigation boundary; never save display coordinates as geographic source data.
 - **Map lifecycle:** panels and provider switches preserve the geographic camera. Viewport queries reuse a padded region within a scale band; stale requests cannot replace newer results.
-- **Uploads:** persist the created place receipt before uploading its image. Reconcile server upload offsets and completion before retrying. An uncertain edit must not be replayed as if it were an idempotent creation.
+- **Uploads:** persist the created place receipt before uploading images in order. Each photo retains its own idempotency key and upload receipt; a later failure does not replay earlier photos. Reconcile server upload offsets and completion before retrying. An uncertain edit must not be replayed as if it were an idempotent creation.
 - **Schema:** application startup checks migrations but never applies them. Run migrations explicitly. Applied SQL files are immutable because SQLx verifies their checksums.
 - **Tests:** write tests use synthetic, isolated services. Production origins and real account data are not test fixtures.
 
@@ -47,5 +59,7 @@ Android keeps one Activity and a saved panel state. Repositories own account and
 ## Build and deployment
 
 Cloudflare Pages builds `frontend/` and publishes `dist/` with its Worker. The Rust runtime is a Docker image behind Caddy, with PostgreSQL, Redis, and uploads on persistent volumes. Native apps build and release independently against the same API.
+
+Before releasing metadata/album support, back up PostgreSQL and uploads, explicitly apply migrations `0009`–`0011` (and any earlier pending migration), and deploy the backend before clients. The park reclassification uses exact ID, title, and version guards; changed records are left for manual review.
 
 See the [backend](backend/README.md), [Web](frontend/README.md), [iOS](apps/ios/README.md), and [Android](apps/android/README.md) guides for commands. Deployment details live with the [backend configuration](backend/deploy/production/README.md) and [Pages Worker](frontend/deploy/cloudflare/README.md).
