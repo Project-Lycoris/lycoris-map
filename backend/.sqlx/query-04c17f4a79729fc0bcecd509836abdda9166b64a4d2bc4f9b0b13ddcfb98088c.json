@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO marker_photos(marker_id, image_url, sort_order)\nVALUES ($1, $2, $3) ON CONFLICT (marker_id, image_url) DO NOTHING\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "04c17f4a79729fc0bcecd509836abdda9166b64a4d2bc4f9b0b13ddcfb98088c"
+}

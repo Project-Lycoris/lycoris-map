@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT\n    id, version, lat, lng, category, title, description, source_language,\n    is_public, username, user_public_id, client_request_id, is_active,\n    open_time_start, open_time_end, review_status, last_edited_by,\n    last_edited_by_public_id, last_edited_by_owner, mark_image, venue_type, deactivated, created_at, updated_at\nFROM map_markers m\nWHERE m.is_public = true\n  AND m.review_status = 'APPROVED'\n  AND m.deactivated = false\n  AND m.lat BETWEEN $1 AND $2\n  AND m.lng BETWEEN $3 AND $4\nORDER BY m.id ASC\n",
+  "query": "SELECT\n    id, version, lat, lng, category, title, description, source_language,\n    is_public, username, user_public_id, client_request_id, is_active,\n    open_time_start, open_time_end, review_status, last_edited_by,\n    last_edited_by_public_id, last_edited_by_owner, mark_image, venue_type, categories, opening_hours_note, deactivated, created_at, updated_at\nFROM map_markers\nWHERE mark_image = $1 OR EXISTS (SELECT 1 FROM marker_photos p WHERE p.marker_id = map_markers.id AND p.image_url = $1)\nORDER BY id ASC\n",
   "describe": {
     "columns": [
       {
@@ -236,6 +236,28 @@
       },
       {
         "ordinal": 21,
+        "name": "categories",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "categories"
+          }
+        }
+      },
+      {
+        "ordinal": 22,
+        "name": "opening_hours_note",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "opening_hours_note"
+          }
+        }
+      },
+      {
+        "ordinal": 23,
         "name": "deactivated",
         "type_info": "Bool",
         "origin": {
@@ -246,7 +268,7 @@
         }
       },
       {
-        "ordinal": 22,
+        "ordinal": 24,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -257,7 +279,7 @@
         }
       },
       {
-        "ordinal": 23,
+        "ordinal": 25,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -270,10 +292,7 @@
     ],
     "parameters": {
       "Left": [
-        "Float8",
-        "Float8",
-        "Float8",
-        "Float8"
+        "Text"
       ]
     },
     "nullable": [
@@ -299,9 +318,11 @@
       true,
       true,
       false,
+      true,
+      false,
       false,
       false
     ]
   },
-  "hash": "3f304f4865ac744b65a13fbb06da5e79886345f94478358fb683d0d093843cd4"
+  "hash": "fe50c2ced647afb34a1411b827ca79272fb0da955466d00ff151acddf75b9874"
 }

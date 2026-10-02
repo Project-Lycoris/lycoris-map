@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT\n    id, version, lat, lng, category, title, description, source_language,\n    is_public, username, user_public_id, client_request_id, is_active,\n    open_time_start, open_time_end, review_status, last_edited_by,\n    last_edited_by_public_id, last_edited_by_owner, mark_image, venue_type, deactivated, created_at, updated_at\nFROM map_markers\nWHERE review_status = 'PENDING'\n  AND deactivated = false\nORDER BY updated_at DESC\n",
+  "query": "SELECT\n    id, version, lat, lng, category, title, description, source_language,\n    is_public, username, user_public_id, client_request_id, is_active,\n    open_time_start, open_time_end, review_status, last_edited_by,\n    last_edited_by_public_id, last_edited_by_owner, mark_image, venue_type, categories, opening_hours_note, deactivated, created_at, updated_at\nFROM map_markers\nWHERE user_public_id = $1\n  AND client_request_id = $2\n",
   "describe": {
     "columns": [
       {
@@ -236,6 +236,28 @@
       },
       {
         "ordinal": 21,
+        "name": "categories",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "categories"
+          }
+        }
+      },
+      {
+        "ordinal": 22,
+        "name": "opening_hours_note",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "opening_hours_note"
+          }
+        }
+      },
+      {
+        "ordinal": 23,
         "name": "deactivated",
         "type_info": "Bool",
         "origin": {
@@ -246,7 +268,7 @@
         }
       },
       {
-        "ordinal": 22,
+        "ordinal": 24,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -257,7 +279,7 @@
         }
       },
       {
-        "ordinal": 23,
+        "ordinal": 25,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -269,7 +291,10 @@
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Text",
+        "Text"
+      ]
     },
     "nullable": [
       false,
@@ -294,9 +319,11 @@
       true,
       true,
       false,
+      true,
+      false,
       false,
       false
     ]
   },
-  "hash": "edef7436ef35752ef8e1b1f0b6cc1acce10ba1ec5ce04433e03100b80f8f7774"
+  "hash": "67e688ab3d523315f5d941518ae57188185d163fa849a118794d43428f9700cd"
 }

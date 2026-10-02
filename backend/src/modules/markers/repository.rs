@@ -5,7 +5,7 @@
 
 use sqlx::PgPool;
 
-use crate::modules::markers::model::{MarkerRow, TranslationRow};
+use crate::modules::markers::model::{MarkerPhoto, MarkerRow, TranslationRow};
 
 /// `map_markers` 读取仓储。
 #[derive(Debug, Clone)]
@@ -16,6 +16,12 @@ pub struct MarkerRepository {
 impl MarkerRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    pub async fn load_photos(&self, ids: &[i64]) -> Result<Vec<MarkerPhoto>, sqlx::Error> {
+        sqlx::query_file_as!(MarkerPhoto, "src/modules/markers/sql/load_photos.sql", ids)
+            .fetch_all(&self.pool)
+            .await
     }
 
     /// 公开且已审核的全部点位。

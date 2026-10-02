@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT\n    id, version, lat, lng, category, title, description, source_language,\n    is_public, username, user_public_id, client_request_id, is_active,\n    open_time_start, open_time_end, review_status, last_edited_by,\n    last_edited_by_public_id, last_edited_by_owner, mark_image, venue_type, deactivated, created_at, updated_at\nFROM map_markers\nWHERE id = ANY($1::int8[])\n  AND is_public = true\n  AND review_status = 'APPROVED'\n  AND deactivated = false\n",
+  "query": "SELECT\n    id, version, lat, lng, category, title, description, source_language,\n    is_public, username, user_public_id, client_request_id, is_active,\n    open_time_start, open_time_end, review_status, last_edited_by,\n    last_edited_by_public_id, last_edited_by_owner, mark_image, venue_type, categories, opening_hours_note, deactivated, created_at, updated_at\nFROM map_markers m\nWHERE m.is_public = true\n  AND m.review_status = 'APPROVED'\n  AND m.deactivated = false\n  AND (\n    lower(m.title) LIKE lower('%' || $1 || '%')\n    OR lower(m.description) LIKE lower('%' || $1 || '%')\n    OR lower(m.category) LIKE lower('%' || $1 || '%')\n    OR m.lat::text LIKE '%' || $1 || '%'\n    OR m.lng::text LIKE '%' || $1 || '%'\n  )\nORDER BY m.id ASC\n",
   "describe": {
     "columns": [
       {
@@ -236,6 +236,28 @@
       },
       {
         "ordinal": 21,
+        "name": "categories",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "categories"
+          }
+        }
+      },
+      {
+        "ordinal": 22,
+        "name": "opening_hours_note",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "opening_hours_note"
+          }
+        }
+      },
+      {
+        "ordinal": 23,
         "name": "deactivated",
         "type_info": "Bool",
         "origin": {
@@ -246,7 +268,7 @@
         }
       },
       {
-        "ordinal": 22,
+        "ordinal": 24,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -257,7 +279,7 @@
         }
       },
       {
-        "ordinal": 23,
+        "ordinal": 25,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -270,7 +292,7 @@
     ],
     "parameters": {
       "Left": [
-        "Int8Array"
+        "Text"
       ]
     },
     "nullable": [
@@ -296,9 +318,11 @@
       true,
       true,
       false,
+      true,
+      false,
       false,
       false
     ]
   },
-  "hash": "2a724ae1b4b6f18f76f7c2b2ac672664df1cbe3a81e9b078a8f26b8847cce667"
+  "hash": "fe2a052da28b133e0fab08bbf7ac02b8dbd18782f646c4af5412e9891f6a3b3a"
 }

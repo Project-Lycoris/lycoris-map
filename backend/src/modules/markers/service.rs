@@ -271,7 +271,7 @@ impl MarkerService {
     /// A committed mutation cannot become a failed write because an optional
     /// translation read failed. Return the saved source as the bounded fallback.
     pub async fn committed_row(&self, row: MarkerRow, lang: &'static str) -> MarkerDto {
-        if lang != super::localization::normalize(Some(&row.source_language)) {
+        {
             match tokio::time::timeout(
                 std::time::Duration::from_secs(2),
                 self.localize_row(row.clone(), lang),
@@ -332,6 +332,11 @@ impl MarkerService {
             by_marker.insert(translation.marker_id, translation);
         }
 
+        let all_ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
+        let mut photos: HashMap<i64, Vec<super::model::MarkerPhoto>> = HashMap::new();
+        for photo in self.repo.load_photos(&all_ids).await.map_err(db_error)? {
+            photos.entry(photo.marker_id).or_default().push(photo);
+        }
         let now = Utc::now();
         Ok(rows
             .into_iter()
@@ -346,7 +351,8 @@ impl MarkerService {
                     self.zone,
                     now,
                 );
-                MarkerDto::from_row(
+                let album = photos.remove(&row.id).unwrap_or_default();
+                let mut dto = MarkerDto::from_row(
                     row,
                     category,
                     title,
@@ -354,7 +360,9 @@ impl MarkerService {
                     content_language,
                     is_active,
                     self.zone.name(),
-                )
+                );
+                dto.photos = album;
+                dto
             })
             .collect())
     }

@@ -1,21 +1,10 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT\n    p.proposer_public_id,\n    m.id, m.version, m.lat, m.lng, m.category, m.title, m.description, m.source_language,\n    m.is_public, m.username, m.user_public_id, m.client_request_id, m.is_active,\n    m.open_time_start, m.open_time_end, m.review_status, m.last_edited_by,\n    m.last_edited_by_public_id, m.last_edited_by_owner, m.mark_image, m.venue_type, m.deactivated, m.created_at, m.updated_at\nFROM marker_image_proposals p\nINNER JOIN map_markers m ON m.id = p.marker_id\nWHERE p.image_url = $1\nORDER BY p.id ASC\n",
+  "query": "-- 邻近查询：PostGIS 空间候选 + legacy 有限异常坐标并集，最终按原 Haversine 精确筛选。\n--\n-- 参数：$1=lat, $2=lng, $3=radius_meters, $4=category（与 Java 仓储语义一致，半径由服务层夹取）。\n--\n-- 设计：\n--   * 合法行（location 非空）用 GiST 部分索引做保守候选：候选半径 radius*1.002+0.01 m，\n--     覆盖 WGS84 最大半轴与产品球半径 6371000 m 的比值，再按原半径精确筛选，不扩大结果；\n--   * location 为 NULL 的有限历史越界坐标走 legacy 分支，按原 Haversine 公式（含周期折回）\n--     在最终筛选中处理；两条分支用 UNION ALL，避免跨分支 OR 使空间索引失效；\n--   * 距离公式在三角函数前显式排除 NaN/Infinity，且把 asin 的入参 clamp 到 [0,1]，\n--     防止异常行或浮点极值造成 asin 域错误；不增加 LIMIT/任意截断，保持 distance,id 稳定排序；\n--   * 最终列仍从 map_markers 直接选取（JOIN 候选 ID），避免子查询丢失 NOT NULL 元数据，\n--     也不把 SQLx 不支持的 geography 生成列带入结果。\nWITH candidates AS (\n    SELECT\n        m.id,\n        CASE\n            WHEN m.lat > '-Infinity'::double precision\n                AND m.lat < 'Infinity'::double precision\n                AND m.lng > '-Infinity'::double precision\n                AND m.lng < 'Infinity'::double precision\n            THEN 6371000 * 2 * asin(sqrt(\n                    LEAST(1.0, GREATEST(0.0,\n                        power(sin(radians((m.lat - $1::double precision) / 2)), 2)\n                        + cos(radians($1::double precision)) * cos(radians(m.lat))\n                        * power(sin(radians((m.lng - $2::double precision) / 2)), 2)\n                    ))\n                 ))\n            ELSE NULL\n        END AS distance\n    FROM public.map_markers m\n    WHERE m.is_public = true\n      AND m.review_status = 'APPROVED'\n      AND m.deactivated = false\n      AND $4::text = ANY(m.categories)\n      AND m.location IS NOT NULL\n      AND ST_DWithin(\n            m.location,\n            ST_SetSRID(ST_MakePoint($2::double precision, $1::double precision), 4326)::geography,\n            $3::double precision * 1.002 + 0.01,\n            false\n          )\n    UNION ALL\n    SELECT\n        m.id,\n        CASE\n            WHEN m.lat > '-Infinity'::double precision\n                AND m.lat < 'Infinity'::double precision\n                AND m.lng > '-Infinity'::double precision\n                AND m.lng < 'Infinity'::double precision\n            THEN 6371000 * 2 * asin(sqrt(\n                    LEAST(1.0, GREATEST(0.0,\n                        power(sin(radians((m.lat - $1::double precision) / 2)), 2)\n                        + cos(radians($1::double precision)) * cos(radians(m.lat))\n                        * power(sin(radians((m.lng - $2::double precision) / 2)), 2)\n                    ))\n                 ))\n            ELSE NULL\n        END AS distance\n    FROM public.map_markers m\n    WHERE m.is_public = true\n      AND m.review_status = 'APPROVED'\n      AND m.deactivated = false\n      AND $4::text = ANY(m.categories)\n      AND m.location IS NULL\n)\nSELECT\n    m.id, m.version, m.lat, m.lng, m.category, m.title, m.description,\n    m.source_language, m.is_public, m.username, m.user_public_id,\n    m.client_request_id, m.is_active, m.open_time_start, m.open_time_end,\n    m.review_status, m.last_edited_by, m.last_edited_by_public_id,\n    m.last_edited_by_owner, m.mark_image, m.venue_type, m.categories, m.opening_hours_note, m.deactivated, m.created_at, m.updated_at\nFROM public.map_markers m\nJOIN candidates c ON c.id = m.id\nWHERE c.distance <= $3::double precision\nORDER BY c.distance ASC, m.id ASC;\n",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "proposer_public_id",
-        "type_info": "Varchar",
-        "origin": {
-          "Table": {
-            "table": "marker_image_proposals",
-            "name": "proposer_public_id"
-          }
-        }
-      },
-      {
-        "ordinal": 1,
         "name": "id",
         "type_info": "Int8",
         "origin": {
@@ -26,7 +15,7 @@
         }
       },
       {
-        "ordinal": 2,
+        "ordinal": 1,
         "name": "version",
         "type_info": "Int8",
         "origin": {
@@ -37,7 +26,7 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 2,
         "name": "lat",
         "type_info": "Float8",
         "origin": {
@@ -48,7 +37,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 3,
         "name": "lng",
         "type_info": "Float8",
         "origin": {
@@ -59,7 +48,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 4,
         "name": "category",
         "type_info": "Varchar",
         "origin": {
@@ -70,7 +59,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 5,
         "name": "title",
         "type_info": "Varchar",
         "origin": {
@@ -81,7 +70,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 6,
         "name": "description",
         "type_info": "Text",
         "origin": {
@@ -92,7 +81,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 7,
         "name": "source_language",
         "type_info": "Varchar",
         "origin": {
@@ -103,7 +92,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 8,
         "name": "is_public",
         "type_info": "Bool",
         "origin": {
@@ -114,7 +103,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 9,
         "name": "username",
         "type_info": "Varchar",
         "origin": {
@@ -125,7 +114,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 10,
         "name": "user_public_id",
         "type_info": "Varchar",
         "origin": {
@@ -136,7 +125,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 11,
         "name": "client_request_id",
         "type_info": "Varchar",
         "origin": {
@@ -147,7 +136,7 @@
         }
       },
       {
-        "ordinal": 13,
+        "ordinal": 12,
         "name": "is_active",
         "type_info": "Bool",
         "origin": {
@@ -158,7 +147,7 @@
         }
       },
       {
-        "ordinal": 14,
+        "ordinal": 13,
         "name": "open_time_start",
         "type_info": "Varchar",
         "origin": {
@@ -169,7 +158,7 @@
         }
       },
       {
-        "ordinal": 15,
+        "ordinal": 14,
         "name": "open_time_end",
         "type_info": "Varchar",
         "origin": {
@@ -180,7 +169,7 @@
         }
       },
       {
-        "ordinal": 16,
+        "ordinal": 15,
         "name": "review_status",
         "type_info": "Varchar",
         "origin": {
@@ -191,7 +180,7 @@
         }
       },
       {
-        "ordinal": 17,
+        "ordinal": 16,
         "name": "last_edited_by",
         "type_info": "Varchar",
         "origin": {
@@ -202,7 +191,7 @@
         }
       },
       {
-        "ordinal": 18,
+        "ordinal": 17,
         "name": "last_edited_by_public_id",
         "type_info": "Varchar",
         "origin": {
@@ -213,7 +202,7 @@
         }
       },
       {
-        "ordinal": 19,
+        "ordinal": 18,
         "name": "last_edited_by_owner",
         "type_info": "Bool",
         "origin": {
@@ -224,7 +213,7 @@
         }
       },
       {
-        "ordinal": 20,
+        "ordinal": 19,
         "name": "mark_image",
         "type_info": "Varchar",
         "origin": {
@@ -235,7 +224,7 @@
         }
       },
       {
-        "ordinal": 21,
+        "ordinal": 20,
         "name": "venue_type",
         "type_info": "Text",
         "origin": {
@@ -246,7 +235,29 @@
         }
       },
       {
+        "ordinal": 21,
+        "name": "categories",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "categories"
+          }
+        }
+      },
+      {
         "ordinal": 22,
+        "name": "opening_hours_note",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "opening_hours_note"
+          }
+        }
+      },
+      {
+        "ordinal": 23,
         "name": "deactivated",
         "type_info": "Bool",
         "origin": {
@@ -257,7 +268,7 @@
         }
       },
       {
-        "ordinal": 23,
+        "ordinal": 24,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -268,7 +279,7 @@
         }
       },
       {
-        "ordinal": 24,
+        "ordinal": 25,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -281,11 +292,13 @@
     ],
     "parameters": {
       "Left": [
+        "Float8",
+        "Float8",
+        "Float8",
         "Text"
       ]
     },
     "nullable": [
-      true,
       false,
       false,
       false,
@@ -306,11 +319,13 @@
       true,
       false,
       true,
+      true,
+      false,
       true,
       false,
       false,
       false
     ]
   },
-  "hash": "2f6c9d81422e96f6706e1d7f4c35ce5b26ff6b23c6cc9ea049c9f50ad6318f15"
+  "hash": "73d695d5b9f904f322db3f72464fb009007a8a850da4571901050179ee078ad1"
 }

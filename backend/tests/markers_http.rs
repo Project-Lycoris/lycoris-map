@@ -27,7 +27,7 @@ use uuid::Uuid;
 const ALLOWED_ORIGIN: &str = "https://app.example.com";
 
 /// 兼容原有点位字段，并增加独立的软删除标志 `deactivated`。
-const MARKER_KEYS: [&str; 26] = [
+const MARKER_KEYS: [&str; 29] = [
     "id",
     "version",
     "lat",
@@ -46,18 +46,21 @@ const MARKER_KEYS: [&str; 26] = [
     "openTimeStart",
     "openTimeEnd",
     "venueType",
+    "categories",
+    "openingHoursNote",
     "hoursTimezone",
     "reviewStatus",
     "lastEditedBy",
     "lastEditedByPublicId",
     "lastEditedByOwner",
     "markImage",
+    "photos",
     "createdAt",
     "updatedAt",
 ];
 
 /// `pending-edits` 的 19 个字段。
-const EDIT_PROPOSAL_KEYS: [&str; 19] = [
+const EDIT_PROPOSAL_KEYS: [&str; 21] = [
     "id",
     "markerId",
     "markerTitle",
@@ -72,6 +75,8 @@ const EDIT_PROPOSAL_KEYS: [&str; 19] = [
     "openTimeStart",
     "openTimeEnd",
     "venueType",
+    "categories",
+    "openingHoursNote",
     "proposerUsername",
     "proposerPublicId",
     "proposerIsOwner",
@@ -1214,6 +1219,8 @@ async fn create_mark_image_only_null_or_blank() {
     // 核心层（非仅 handler）规则：非空恶意 URL 在首次完整校验被拒；null/空串/空白归一为 None。
     let actor = Actor::new(owner_id.to_string(), "owner", false);
     let service_request = |title: &str, mark_image: Option<String>| MarkerCreateRequest {
+        categories: None,
+        opening_hours_note: None,
         lat: Some(1.0),
         lng: Some(2.0),
         category: Some("accessible_toilet".to_string()),

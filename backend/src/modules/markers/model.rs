@@ -32,6 +32,8 @@ pub struct MarkerRow {
     pub last_edited_by_owner: bool,
     pub mark_image: Option<String>,
     pub venue_type: Option<String>,
+    pub categories: Vec<String>,
+    pub opening_hours_note: Option<String>,
     pub deactivated: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -53,6 +55,7 @@ pub struct TranslationRow {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MarkerDto {
+    pub photos: Vec<MarkerPhoto>,
     pub id: i64,
     pub version: i64,
     pub lat: f64,
@@ -74,8 +77,10 @@ pub struct MarkerDto {
     pub last_edited_by_public_id: Option<String>,
     pub last_edited_by_owner: bool,
     pub mark_image: Option<String>,
-    /// 场所标签；仅 `category == "accessible_toilet"` 非空，否则为 `None`。
+    /// Venue tags are valid whenever categories include an accessible toilet.
     pub venue_type: Option<String>,
+    pub categories: Vec<String>,
+    pub opening_hours_note: Option<String>,
     /// 服务端可用时区（IANA 名称），与 `availability_zone` 配置一致；只读派生字段。
     pub hours_timezone: String,
     pub deactivated: bool,
@@ -95,6 +100,7 @@ impl MarkerDto {
         hours_timezone: &str,
     ) -> Self {
         Self {
+            photos: Vec::new(),
             id: row.id,
             version: row.version,
             lat: row.lat,
@@ -117,6 +123,12 @@ impl MarkerDto {
             last_edited_by_owner: row.last_edited_by_owner,
             mark_image: row.mark_image,
             venue_type: row.venue_type,
+            categories: row
+                .categories
+                .iter()
+                .map(|value| super::localization::normalize_category_read(value))
+                .collect(),
+            opening_hours_note: row.opening_hours_note,
             hours_timezone: hours_timezone.to_string(),
             deactivated: row.deactivated,
             created_at: row.created_at,
@@ -162,4 +174,14 @@ pub fn can_view(row: &MarkerRow, viewer: Option<&Viewer<'_>>) -> bool {
         }
     }
     is_public_approved(row)
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkerPhoto {
+    pub id: i64,
+    #[serde(skip)]
+    pub marker_id: i64,
+    pub url: String,
+    pub sort_order: i64,
 }

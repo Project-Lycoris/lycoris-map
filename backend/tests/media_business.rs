@@ -1268,3 +1268,105 @@ async fn soft_deletion_preserves_images_and_proposals_but_revokes_public_and_own
     assert_eq!(service.list_pending_images(&admin).await.unwrap().len(), 1);
     pool.close().await;
 }
+
+#[tokio::test]
+async fn album_retains_cover_orders_by_submission_and_guards_every_photo() {
+    let (_temp, pool) = TempDatabase::create_migrated().await;
+    let dir = TempDir::new().unwrap();
+    let store = ImageStore::with_default_concurrency(dir.path()).unwrap();
+    let service = media_service(pool.clone(), store, connect_redis().await);
+    let owner = "11111111-1111-1111-1111-111111111111";
+    let admin = viewer(Some("33333333-3333-3333-3333-333333333333"), "ADMIN", false);
+    let marker = insert_marker(&pool, "Album", true, "APPROVED", owner, None, 0).await;
+    let first = insert_proposal(
+        &pool,
+        marker,
+        "Album",
+        "owner",
+        Some(owner),
+        "/uploads/markers/first.png",
+        "PENDING",
+    )
+    .await;
+    let second = insert_proposal(
+        &pool,
+        marker,
+        "Album",
+        "owner",
+        Some(owner),
+        "/uploads/markers/second.png",
+        "PENDING",
+    )
+    .await;
+    for name in ["first.png", "second.png"] {
+        write_media(dir.path(), "markers", name, &rgba_png(2, 2));
+    }
+    // Reviewing in reverse must not reverse the contribution's chosen cover.
+    service
+        .approve_image_proposal(second, &admin, "admin")
+        .await
+        .unwrap();
+    service
+        .approve_image_proposal(first, &admin, "admin")
+        .await
+        .unwrap();
+    assert_eq!(
+        marker_image_state(&pool, marker).await.1.as_deref(),
+        Some("/uploads/markers/first.png")
+    );
+    let urls: Vec<String> = sqlx::query_scalar(
+        "SELECT image_url FROM marker_photos WHERE marker_id=$1 ORDER BY sort_order,id",
+    )
+    .bind(marker)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        urls,
+        ["/uploads/markers/first.png", "/uploads/markers/second.png"]
+    );
+    assert!(
+        service
+            .approve_image_proposal(first, &admin, "admin")
+            .await
+            .is_err()
+    );
+    for name in ["first.png", "second.png"] {
+        assert!(service.open_uploads("markers", name, None).await.is_ok());
+    }
+    sqlx::query("UPDATE map_markers SET is_public=false WHERE id=$1")
+        .bind(marker)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        service
+            .open_uploads("markers", "second.png", None)
+            .await
+            .is_err()
+    );
+    let owner_viewer = viewer(Some(owner), "USER", false);
+    assert!(
+        service
+            .open_uploads("markers", "second.png", Some(&owner_viewer))
+            .await
+            .is_ok()
+    );
+    sqlx::query("UPDATE map_markers SET deactivated=true WHERE id=$1")
+        .bind(marker)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        service
+            .open_uploads("markers", "second.png", Some(&owner_viewer))
+            .await
+            .is_err()
+    );
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM marker_photos WHERE marker_id=$1")
+        .bind(marker)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 2, "soft deletion must retain the album");
+}

@@ -1,10 +1,21 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT\n    id, version, lat, lng, category, title, description, source_language,\n    is_public, username, user_public_id, client_request_id, is_active,\n    open_time_start, open_time_end, review_status, last_edited_by,\n    last_edited_by_public_id, last_edited_by_owner, mark_image, venue_type, deactivated, created_at, updated_at\nFROM map_markers\nWHERE id = $1\nFOR SHARE\n",
+  "query": "SELECT\n    p.proposer_public_id,\n    m.id, m.version, m.lat, m.lng, m.category, m.title, m.description, m.source_language,\n    m.is_public, m.username, m.user_public_id, m.client_request_id, m.is_active,\n    m.open_time_start, m.open_time_end, m.review_status, m.last_edited_by,\n    m.last_edited_by_public_id, m.last_edited_by_owner, m.mark_image, m.venue_type, m.categories, m.opening_hours_note, m.deactivated, m.created_at, m.updated_at\nFROM marker_image_proposals p\nINNER JOIN map_markers m ON m.id = p.marker_id\nWHERE p.image_url = $1\nORDER BY p.id ASC\n",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
+        "name": "proposer_public_id",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "marker_image_proposals",
+            "name": "proposer_public_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
         "name": "id",
         "type_info": "Int8",
         "origin": {
@@ -15,7 +26,7 @@
         }
       },
       {
-        "ordinal": 1,
+        "ordinal": 2,
         "name": "version",
         "type_info": "Int8",
         "origin": {
@@ -26,7 +37,7 @@
         }
       },
       {
-        "ordinal": 2,
+        "ordinal": 3,
         "name": "lat",
         "type_info": "Float8",
         "origin": {
@@ -37,7 +48,7 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "lng",
         "type_info": "Float8",
         "origin": {
@@ -48,7 +59,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "category",
         "type_info": "Varchar",
         "origin": {
@@ -59,7 +70,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "title",
         "type_info": "Varchar",
         "origin": {
@@ -70,7 +81,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "description",
         "type_info": "Text",
         "origin": {
@@ -81,7 +92,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "source_language",
         "type_info": "Varchar",
         "origin": {
@@ -92,7 +103,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "is_public",
         "type_info": "Bool",
         "origin": {
@@ -103,7 +114,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "username",
         "type_info": "Varchar",
         "origin": {
@@ -114,7 +125,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "user_public_id",
         "type_info": "Varchar",
         "origin": {
@@ -125,7 +136,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "client_request_id",
         "type_info": "Varchar",
         "origin": {
@@ -136,7 +147,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "is_active",
         "type_info": "Bool",
         "origin": {
@@ -147,7 +158,7 @@
         }
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "open_time_start",
         "type_info": "Varchar",
         "origin": {
@@ -158,7 +169,7 @@
         }
       },
       {
-        "ordinal": 14,
+        "ordinal": 15,
         "name": "open_time_end",
         "type_info": "Varchar",
         "origin": {
@@ -169,7 +180,7 @@
         }
       },
       {
-        "ordinal": 15,
+        "ordinal": 16,
         "name": "review_status",
         "type_info": "Varchar",
         "origin": {
@@ -180,7 +191,7 @@
         }
       },
       {
-        "ordinal": 16,
+        "ordinal": 17,
         "name": "last_edited_by",
         "type_info": "Varchar",
         "origin": {
@@ -191,7 +202,7 @@
         }
       },
       {
-        "ordinal": 17,
+        "ordinal": 18,
         "name": "last_edited_by_public_id",
         "type_info": "Varchar",
         "origin": {
@@ -202,7 +213,7 @@
         }
       },
       {
-        "ordinal": 18,
+        "ordinal": 19,
         "name": "last_edited_by_owner",
         "type_info": "Bool",
         "origin": {
@@ -213,7 +224,7 @@
         }
       },
       {
-        "ordinal": 19,
+        "ordinal": 20,
         "name": "mark_image",
         "type_info": "Varchar",
         "origin": {
@@ -224,7 +235,7 @@
         }
       },
       {
-        "ordinal": 20,
+        "ordinal": 21,
         "name": "venue_type",
         "type_info": "Text",
         "origin": {
@@ -235,7 +246,29 @@
         }
       },
       {
-        "ordinal": 21,
+        "ordinal": 22,
+        "name": "categories",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "categories"
+          }
+        }
+      },
+      {
+        "ordinal": 23,
+        "name": "opening_hours_note",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "opening_hours_note"
+          }
+        }
+      },
+      {
+        "ordinal": 24,
         "name": "deactivated",
         "type_info": "Bool",
         "origin": {
@@ -246,7 +279,7 @@
         }
       },
       {
-        "ordinal": 22,
+        "ordinal": 25,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -257,7 +290,7 @@
         }
       },
       {
-        "ordinal": 23,
+        "ordinal": 26,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -270,10 +303,11 @@
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Text"
       ]
     },
     "nullable": [
+      true,
       false,
       false,
       false,
@@ -294,11 +328,13 @@
       true,
       false,
       true,
+      true,
+      false,
       true,
       false,
       false,
       false
     ]
   },
-  "hash": "0f0649d58e09f181899fcd0304fced2120c6439e5e9d0f49b40d2de0ab206fa2"
+  "hash": "3d279cc524080ac394c93a152cfabab2ce2d9004dd143f4279d99d9419722206"
 }

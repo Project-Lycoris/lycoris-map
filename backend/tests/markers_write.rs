@@ -150,6 +150,8 @@ fn valid_create() -> MarkerCreateRequest {
         client_request_id: None,
         mark_image: None,
         venue_type: None,
+        categories: None,
+        opening_hours_note: None,
     }
 }
 

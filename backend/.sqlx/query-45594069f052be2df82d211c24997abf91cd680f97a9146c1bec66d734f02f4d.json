@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE map_markers SET\n    category = $2,\n    title = $3,\n    description = $4,\n    source_language = $5,\n    is_public = $6,\n    is_active = $7,\n    open_time_start = $8,\n    open_time_end = $9,\n    review_status = $10,\n    last_edited_by = $11,\n    last_edited_by_public_id = $12,\n    last_edited_by_owner = $13,\n    venue_type = $14,\n    updated_at = now(),\n    version = version + 1\nWHERE id = $1\nRETURNING\n    id, version, lat, lng, category, title, description, source_language,\n    is_public, username, user_public_id, client_request_id, is_active,\n    open_time_start, open_time_end, review_status, last_edited_by,\n    last_edited_by_public_id, last_edited_by_owner, mark_image, venue_type, deactivated, created_at, updated_at\n",
+  "query": "INSERT INTO map_markers (\n    lat, lng, category, title, description, source_language, is_public, is_active,\n    open_time_start, open_time_end, mark_image, username, user_public_id, client_request_id,\n    venue_type, review_status, last_edited_by, last_edited_by_public_id, last_edited_by_owner,\n    categories, opening_hours_note, created_at, updated_at)\nVALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,\n        'PENDING', $16, $17, true, $18, $19, now(), now())\nRETURNING\n    id, version, lat, lng, category, title, description, source_language,\n    is_public, username, user_public_id, client_request_id, is_active,\n    open_time_start, open_time_end, review_status, last_edited_by,\n    last_edited_by_public_id, last_edited_by_owner, mark_image, venue_type, categories, opening_hours_note, deactivated, created_at, updated_at\n",
   "describe": {
     "columns": [
       {
@@ -236,6 +236,28 @@
       },
       {
         "ordinal": 21,
+        "name": "categories",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "categories"
+          }
+        }
+      },
+      {
+        "ordinal": 22,
+        "name": "opening_hours_note",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "map_markers",
+            "name": "opening_hours_note"
+          }
+        }
+      },
+      {
+        "ordinal": 23,
         "name": "deactivated",
         "type_info": "Bool",
         "origin": {
@@ -246,7 +268,7 @@
         }
       },
       {
-        "ordinal": 22,
+        "ordinal": 24,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -257,7 +279,7 @@
         }
       },
       {
-        "ordinal": 23,
+        "ordinal": 25,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -270,7 +292,8 @@
     ],
     "parameters": {
       "Left": [
-        "Int8",
+        "Float8",
+        "Float8",
         "Varchar",
         "Varchar",
         "Text",
@@ -282,7 +305,11 @@
         "Varchar",
         "Varchar",
         "Varchar",
-        "Bool",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Varchar",
+        "TextArray",
         "Text"
       ]
     },
@@ -309,9 +336,11 @@
       true,
       true,
       false,
+      true,
+      false,
       false,
       false
     ]
   },
-  "hash": "8b693b4f713588982c3be763c889baa9abbc0ae82278843a103e2c623923a828"
+  "hash": "45594069f052be2df82d211c24997abf91cd680f97a9146c1bec66d734f02f4d"
 }

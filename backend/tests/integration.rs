@@ -48,8 +48,8 @@ async fn migrates_baseline_and_passes_health_checks() {
     assert_eq!(applied, expected, "完整迁移应登记内嵌迁移的全部版本");
     assert_eq!(
         applied,
-        vec![1, 2, 3, 4, 5, 6, 7, 8],
-        "0008 之后完整迁移版本应为 [1, 2, 3, 4, 5, 6, 7, 8]"
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+        "0011 之后完整迁移版本应为 [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]"
     );
 
     let redis = connect_redis().await;
@@ -423,8 +423,8 @@ async fn migrate_lock_contention_is_bounded_then_reusable() {
     assert_eq!(applied, expected, "释放迁移锁后应登记内嵌迁移的全部版本");
     assert_eq!(
         applied,
-        vec![1, 2, 3, 4, 5, 6, 7, 8],
-        "0008 之后完整迁移版本应为 [1, 2, 3, 4, 5, 6, 7, 8]"
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+        "0011 之后完整迁移版本应为 [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]"
     );
 
     contender.close().await;

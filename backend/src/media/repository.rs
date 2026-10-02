@@ -165,6 +165,23 @@ impl MediaRepository {
     }
 
     /// 更新点位图片并推进版本，返回更新后的行。
+    pub async fn append_marker_photo(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        marker_id: i64,
+        url: &str,
+        order: i64,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query_file!(
+            "src/media/sql/insert_marker_photo.sql",
+            marker_id,
+            url,
+            order
+        )
+        .execute(&mut **tx)
+        .await?;
+        Ok(())
+    }
     pub async fn update_marker_mark_image(
         &self,
         conn: &mut PgConnection,

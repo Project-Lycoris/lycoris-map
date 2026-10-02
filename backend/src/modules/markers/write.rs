@@ -37,6 +37,8 @@ const CLIENT_REQUEST_ID_MAX: usize = 64;
 /// 从 `map_markers` 一次写回的全部可变字段。
 struct MarkerValues {
     category: String,
+    categories: Vec<String>,
+    opening_hours_note: Option<String>,
     title: String,
     description: Option<String>,
     source_language: String,
@@ -106,7 +108,10 @@ impl MarkerWriteService {
         if !lng.is_finite() || !(-180.0..=180.0).contains(&lng) {
             return Err(WriteError::BadRequest("lat/lng 不合法".to_string()));
         }
-        let category = normalize_category(req.category.as_deref())?;
+        let categories =
+            resolve_categories(req.categories.as_deref(), req.category.as_deref(), &[])?;
+        let category = categories[0].clone();
+        let opening_hours_note = resolve_hours_note(req.opening_hours_note.as_deref(), None)?;
         let title = req.title.clone().expect("已校验必填字段");
         if db_len(&title) > TITLE_MAX {
             return Err(WriteError::BadRequest("title 过长".to_string()));
@@ -120,7 +125,8 @@ impl MarkerWriteService {
         let language = "zh";
         let is_public = req.is_public.unwrap_or(true);
         let is_active = req.is_active.unwrap_or(true);
-        let venue_type = resolve_venue_type_create(&category, req.venue_type.as_deref())?;
+        let venue_type =
+            resolve_venue_type_create(venue_category(&categories), req.venue_type.as_deref())?;
 
         let mut tx = self
             .pool
@@ -147,6 +153,8 @@ impl MarkerWriteService {
             venue_type.as_deref(),
             actor.username.as_str(),
             actor.public_id.as_str(),
+            &categories,
+            opening_hours_note.as_deref(),
         )
         .fetch_one(&mut *tx)
         .await;
@@ -260,10 +268,16 @@ impl MarkerWriteService {
             return Err(WriteError::NotFound(MSG_MARKER_NOT_FOUND.to_string()));
         }
 
-        let category = match req.category.as_deref() {
-            Some(raw) => normalize_category(Some(raw))?,
-            None => marker.category.clone(),
-        };
+        let categories = resolve_categories(
+            req.categories.as_deref(),
+            req.category.as_deref(),
+            &marker.categories,
+        )?;
+        let category = categories[0].clone();
+        let opening_hours_note = resolve_hours_note(
+            req.opening_hours_note.as_deref(),
+            marker.opening_hours_note.as_deref(),
+        )?;
         if db_len(&category) > CATEGORY_MAX {
             return Err(WriteError::BadRequest("category 过长".to_string()));
         }
@@ -288,7 +302,7 @@ impl MarkerWriteService {
         let is_public = req.is_public.unwrap_or(marker.is_public);
         let is_active = req.is_active.unwrap_or(marker.is_active);
         let venue_type = resolve_venue_type_update(
-            &category,
+            venue_category(&categories),
             req.venue_type.as_deref(),
             marker.venue_type.as_deref(),
         )?;
@@ -318,6 +332,8 @@ impl MarkerWriteService {
             venue_type.as_deref(),
             marker.version,
             base_content,
+            &categories,
+            opening_hours_note.as_deref(),
         )
         .execute(&mut *tx)
         .await
@@ -442,6 +458,8 @@ impl MarkerWriteService {
         let mut values = base_values(&marker);
         values.source_language = "zh".to_string();
         values.category = normalize_category(Some(&proposal.category))?;
+        values.categories = proposal.categories.clone();
+        values.opening_hours_note = proposal.opening_hours_note.clone();
         values.is_public = proposal.is_public;
         values.is_active = proposal.is_active;
         values.open_time_start = proposal.open_time_start.clone();
@@ -504,10 +522,16 @@ impl MarkerWriteService {
         let Some(marker) = marker else {
             return Err(WriteError::NotFound(MSG_MARKER_NOT_FOUND.to_string()));
         };
-        let category = match req.category.as_deref() {
-            Some(raw) => normalize_category(Some(raw))?,
-            None => marker.category.clone(),
-        };
+        let categories = resolve_categories(
+            req.categories.as_deref(),
+            req.category.as_deref(),
+            &marker.categories,
+        )?;
+        let category = categories[0].clone();
+        let opening_hours_note = resolve_hours_note(
+            req.opening_hours_note.as_deref(),
+            marker.opening_hours_note.as_deref(),
+        )?;
         let text = resolve_edit_text(
             &mut tx,
             &marker,
@@ -527,12 +551,14 @@ impl MarkerWriteService {
             };
 
         let venue_type = resolve_venue_type_update(
-            &category,
+            venue_category(&categories),
             req.venue_type.as_deref(),
             marker.venue_type.as_deref(),
         )?;
         let mut values = base_values(&marker);
         values.category = category;
+        values.categories = categories;
+        values.opening_hours_note = opening_hours_note;
         values.is_public = req.is_public.unwrap_or(marker.is_public);
         values.is_active = req.is_active.unwrap_or(marker.is_active);
         values.open_time_start = open_time_start;
@@ -968,7 +994,7 @@ async fn content_snapshot(
     .await
     .map_err(|error| log_db_error(&error))?;
     Ok(serde_json::json!({
-        "category": marker.category, "title": marker.title, "description": marker.description,
+        "category": marker.category, "categories": marker.categories, "opening_hours_note": marker.opening_hours_note, "title": marker.title, "description": marker.description,
         "source_language": marker.source_language,
         "lat": format!("{:016x}", marker.lat.to_bits()), "lng": format!("{:016x}", marker.lng.to_bits()),
         "is_public": marker.is_public, "is_active": marker.is_active,
@@ -981,6 +1007,8 @@ async fn content_snapshot(
 fn base_values(marker: &MarkerRow) -> MarkerValues {
     MarkerValues {
         category: marker.category.clone(),
+        categories: marker.categories.clone(),
+        opening_hours_note: marker.opening_hours_note.clone(),
         title: marker.title.clone(),
         description: marker.description.clone(),
         source_language: marker.source_language.clone(),
@@ -1059,6 +1087,8 @@ async fn write_marker_fields(
 ) -> Result<MarkerRow, WriteError> {
     let MarkerValues {
         category,
+        categories,
+        opening_hours_note,
         title,
         description,
         source_language,
@@ -1089,6 +1119,8 @@ async fn write_marker_fields(
         last_edited_by_public_id,
         last_edited_by_owner,
         venue_type,
+        &categories,
+        opening_hours_note,
     )
     .fetch_one(&mut **tx)
     .await
@@ -1184,6 +1216,59 @@ fn log_db_error(error: &sqlx::Error) -> WriteError {
     } else {
         WriteError::Internal
     }
+}
+
+/// An omitted multi-type field from an old client preserves supplementary types.
+fn resolve_categories(
+    explicit: Option<&[String]>,
+    primary: Option<&str>,
+    current: &[String],
+) -> Result<Vec<String>, WriteError> {
+    let source = match explicit {
+        Some(values) if values.is_empty() || values.len() > 4 => {
+            return Err(WriteError::BadRequest("请选择 1–4 个设施类型".into()));
+        }
+        Some(values) => values.to_vec(),
+        None => {
+            let first = match primary {
+                Some(value) => normalize_category(Some(value))?,
+                None => current.first().cloned().ok_or_else(missing_fields)?,
+            };
+            let mut values = vec![first];
+            values.extend(current.iter().skip(1).cloned());
+            values
+        }
+    };
+    let mut result = Vec::new();
+    for value in source {
+        let value = normalize_category(Some(&value))?;
+        if !result.contains(&value) {
+            result.push(value);
+        }
+    }
+    Ok(result)
+}
+fn venue_category(categories: &[String]) -> &str {
+    if categories.iter().any(|value| value == "accessible_toilet") {
+        "accessible_toilet"
+    } else {
+        "self_definition"
+    }
+}
+fn resolve_hours_note(
+    value: Option<&str>,
+    previous: Option<&str>,
+) -> Result<Option<String>, WriteError> {
+    let value = value
+        .or(previous)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if value.is_some_and(|value| value.chars().count() > 1000) {
+        return Err(WriteError::BadRequest(
+            "营业时间备注不能超过 1000 字".into(),
+        ));
+    }
+    Ok(value.map(str::to_string))
 }
 
 #[cfg(test)]
