@@ -222,7 +222,8 @@ class AppSmokeTest {
             compose.onNode(text(selected.title(Language.EN), selected.title(Language.ZH)) and radio).assertIsSelected()
             compose.onNode(text("Done", "完成") and hasClickAction()).performClick()
             compose.onNode(text("About Lycoris Maps", "关于 Lycoris Maps") and hasClickAction()).performScrollTo().performClick()
-            compose.onNodeWithText(BuildConfig.VERSION_NAME).assertIsDisplayed()
+            compose.onNode(text("Version ${BuildConfig.VERSION_NAME}", "版本 ${BuildConfig.VERSION_NAME}"))
+                .performScrollTo().assertIsDisplayed()
             compose.onNode(text(
                 "A simple map for finding accessible toilets, nursing rooms, and medical institutions.",
                 "一款简洁的地图，帮你找到无障碍卫生间、母婴室和医疗机构。",
