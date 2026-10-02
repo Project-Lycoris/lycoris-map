@@ -14,12 +14,18 @@ it('preserves an existing tag through editing and clears it when the category ch
         venueType: 'metro',
     })
     expect(draftText(draft, 'en').venueType).toBe('metro')
-    expect(draftText({ ...draft, category: 'medical' }, 'en').venueType).toBeNull()
+    expect(
+        draftText({ ...draft, category: 'medical', categories: ['medical'] }, 'en').venueType,
+    ).toBeNull()
     expect(
         markerTextSchema.safeParse({ ...draftText(draft, 'en'), venueType: 'invalid' }).success,
     ).toBe(false)
     expect(
-        markerTextSchema.safeParse({ ...draftText(draft, 'en'), category: 'baby_room' }).success,
+        markerTextSchema.safeParse({
+            ...draftText(draft, 'en'),
+            category: 'baby_room',
+            categories: ['baby_room'],
+        }).success,
     ).toBe(false)
 })
 it('shows a labelled venue selector only for an accessible toilet', () => {

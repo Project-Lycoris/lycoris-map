@@ -64,10 +64,10 @@ it('opens a desktop composer only after a real map click and keeps the selected 
     fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), {
         target: { value: 'Local draft' },
     })
-    fireEvent.click(screen.getByRole('radio', { name: 'Nursing Rooms' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Nursing Rooms' }))
     resize(true)
     expect(screen.getByRole('textbox', { name: 'Title' })).toHaveValue('Local draft')
-    expect(screen.getByRole('radio', { name: 'Nursing Rooms' })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'Nursing Rooms' })).toBeChecked()
     const mobileForm = screen.getByRole('form', { name: 'Contribution draft' })
     expect([mobileForm.getAttribute('data-lat'), mobileForm.getAttribute('data-lng')]).toEqual(
         point,

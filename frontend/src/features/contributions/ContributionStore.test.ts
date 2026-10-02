@@ -95,6 +95,8 @@ it('edit proposals preserve source language, privacy and fixed coordinates witho
     expect(api.proposeMarkerEdit.mock.calls[0]![1]).toEqual({
         title: '新标题',
         category: base.category,
+        categories: [base.category],
+        openingHoursNote: '',
         venueType: null,
         description: '',
         language: 'zh',
@@ -201,7 +203,7 @@ it('can reopen busy work and dispose cancels it without accepting a late result'
     expect((upload.mock.calls[0]![4] as AbortSignal).aborted).toBe(true)
     finish()
     await submission
-    expect(store.getSnapshot()).toMatchObject({ phase: 'draft', saved: null })
+    expect(store.getSnapshot()).toMatchObject({ phase: 'photo-saving', uploadedCount: 0 })
 })
 it('allows discarding a rejected image while preserving the saved place', async () => {
     const { store, scope, upload, api } = await setup()
@@ -225,4 +227,103 @@ it('submits Chinese content from an English UI and an old English draft', async 
         draftText({ ...emptyContributionDraft, title: '中文修改', category: 'toilet' }, 'en')
             .language,
     ).toBe('zh')
+})
+
+it('restores multiple photos and the saved marker after a reload without repeating completed uploads', async () => {
+    const { client, session, api, scope, marker } = await setup()
+    const rows = new Map<string, import('./DraftJournal').SavedDraft>()
+    const journal: import('./DraftJournal').DraftJournal = {
+        list: async (owner) => [...rows.values()].filter((row) => row.owner === owner),
+        put: async (row) => {
+            rows.set(row.id, row)
+        },
+        remove: async (id, owner) => {
+            if (rows.get(id)?.owner === owner) rows.delete(id)
+        },
+    }
+    const uploader = vi
+        .fn()
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(ApiError.network('lost'))
+    const first = new ContributionStore(client, session, api, async () => {}, uploader, journal)
+    first.change({ ...emptyContributionDraft, title: 'Two photos', category: 'toilet' })
+    first.setPoint({ lat: 30, lng: 120 })
+    const photos = [
+        new File(['a'], 'a.png', { type: 'image/png' }),
+        new File(['b'], 'b.png', { type: 'image/png' }),
+    ]
+    await first.addPhotos(photos)
+    await first.submit(scope)
+    expect(first.getSnapshot()).toMatchObject({
+        phase: 'photo-paused',
+        uploadedCount: 1,
+        saved: marker,
+    })
+    const id = first.getSnapshot().requestId
+    await first.newDraft() // Flush pending persistence; the paused receipt remains in the library.
+    const upload = vi.fn().mockResolvedValue(undefined)
+    const restored = new ContributionStore(client, session, api, async () => {}, upload, journal)
+    expect(await restored.resumeDraft(id)).toBe(true)
+    await restored.submit(scope)
+    expect(api.createMarker).toHaveBeenCalledTimes(1)
+    expect(upload).toHaveBeenCalledTimes(1)
+    expect(upload.mock.calls[0]!.slice(0, 3)).toEqual(uploader.mock.calls[1]!.slice(0, 3))
+    expect(restored.getSnapshot().phase).toBe('complete')
+    await restored.newDraft()
+    expect(rows.size).toBe(0)
+})
+
+it('keeps an interrupted draft private across account changes and restores it for its owner', async () => {
+    const { client, session, api, scope } = await setup()
+    const rows = new Map<string, import('./DraftJournal').SavedDraft>()
+    const journal: import('./DraftJournal').DraftJournal = {
+        list: async (owner) => [...rows.values()].filter((row) => row.owner === owner),
+        put: async (row) => {
+            rows.set(row.id, row)
+        },
+        remove: async (id, owner) => {
+            if (rows.get(id)?.owner === owner) rows.delete(id)
+        },
+    }
+    const store = new ContributionStore(client, session, api, async () => {}, vi.fn(), journal)
+    store.change({ ...emptyContributionDraft, title: 'Private draft', category: 'toilet' })
+    store.setPoint({ lat: 31, lng: 121 })
+    const id = store.getSnapshot().requestId
+    await store.newDraft()
+    vi.mocked(sessionApi.fetchMe).mockResolvedValue({
+        ...session.getSnapshot().user!,
+        publicId: 'B',
+    })
+    await session.refresh()
+    store.clearStale()
+    await store.refreshDrafts()
+    expect(store.getSnapshot().drafts).toEqual([])
+    expect(await store.resumeDraft(id)).toBe(false)
+    expect(rows.get(id)?.owner).toBe(scope.publicId)
+    vi.mocked(sessionApi.fetchMe).mockResolvedValue({
+        ...session.getSnapshot().user!,
+        publicId: 'A',
+    })
+    await session.refresh()
+    store.clearStale()
+    expect(await store.resumeDraft(id)).toBe(true)
+    expect(store.getSnapshot().draft.title).toBe('Private draft')
+})
+
+it('does not submit when the durable checkpoint fails, and reports storage failure', async () => {
+    const { client, session, api, scope } = await setup()
+    const journal: import('./DraftJournal').DraftJournal = {
+        list: async () => [],
+        put: async () => {
+            throw new Error('quota exceeded')
+        },
+        remove: async () => {},
+    }
+    const store = new ContributionStore(client, session, api, async () => {}, vi.fn(), journal)
+    store.change({ ...emptyContributionDraft, title: 'Keep my work', category: 'toilet' })
+    store.setPoint({ lat: 30, lng: 120 })
+    await store.submit(scope)
+    expect(api.createMarker).not.toHaveBeenCalled()
+    expect(store.getSnapshot().persistenceError).toContain('Could not save')
+    expect(store.getSnapshot().draft.title).toBe('Keep my work')
 })

@@ -3,12 +3,13 @@ import { useEffect, useRef } from 'react'
 import { IconButton } from '@/shared/ui/design-primitives'
 import { useOpeningStatus, hoursStatusLabel } from './openingStatus'
 import { VenueTag } from './VenueTag'
-import { distanceLabel, openingHours, publicImageUrl } from './model'
+import { distanceLabel, openingHours } from './model'
 import type { PlaceBrowse } from './usePlaceBrowse'
 import { ReadMessage } from './PlaceResults'
 import { PlaceActions } from './PlaceActions'
 import { BookmarkButton } from '@/features/bookmarks/BookmarkButton'
-import { PlacePhoto } from './PlacePhoto'
+import { PlaceGallery } from './PlaceGallery'
+import { FacilityTags } from './FacilityTags'
 
 export function PlaceDetails({
     browse,
@@ -26,7 +27,6 @@ export function PlaceDetails({
     useEffect(() => {
         heading.current?.focus({ preventScroll: true })
     }, [place?.id])
-    const image = publicImageUrl(place?.markImage ?? null)
     const distance = place ? distanceLabel(place, browse.location.position) : null
     return (
         <div
@@ -63,6 +63,7 @@ export function PlaceDetails({
                         />
                     )}
                     <div className="place-tags">
+                        <FacilityTags place={place} />
                         <VenueTag place={place} />
                         {hours === 'closing-soon' && (
                             <span className="place-tag closing-soon-tag">
@@ -80,7 +81,9 @@ export function PlaceDetails({
                             {hoursStatusLabel(hours) && (
                                 <>{ui.message(hoursStatusLabel(hours))} · </>
                             )}
-                            {openingHours(place, browse.language)}
+                            {place.openingHoursNote?.trim()
+                                ? ui.text('See opening hours note')
+                                : openingHours(place, browse.language)}
                         </span>
                     </span>
                     {mobile && place.description && (
@@ -88,12 +91,10 @@ export function PlaceDetails({
                             {place.description}
                         </p>
                     )}
-                    {image && (
-                        <PlacePhoto
-                            className={mobile ? 'mobile-photo' : 'place-photo'}
-                            src={image}
-                        />
+                    {place.openingHoursNote && (
+                        <p className="place-hours-note">{place.openingHoursNote}</p>
                     )}
+                    <PlaceGallery key={place.id} place={place} mobile={mobile} />
                     {!mobile && place.description && (
                         <p className="place-description" lang={place.contentLanguage}>
                             {place.description}

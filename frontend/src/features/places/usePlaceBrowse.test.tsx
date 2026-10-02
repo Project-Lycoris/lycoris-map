@@ -238,7 +238,7 @@ it('keeps previously loaded pins after a region request exhausts retries, then r
     const original = result.current.markers[0]!
     vi.mocked(reads.readViewport).mockRejectedValue(new ApiError(503, 'Offline'))
     act(() => result.current.onView(mapView(31, 32, 121, 122, { lat: 31.5, lng: 121.5 }, 16)))
-    await waitFor(() => expect(result.current.state.error).toContain('Could not load'), {
+    await waitFor(() => expect(result.current.state.error).toContain('temporarily unavailable'), {
         timeout: 3500,
     })
     expect(result.current.markers).toEqual([original])
@@ -291,7 +291,7 @@ it('clears the fallback when a successful region read is honestly empty', async 
     // A later failure must not revive the cleared pins.
     vi.mocked(reads.readViewport).mockRejectedValue(new ApiError(503, 'Offline'))
     act(() => result.current.onView(mapView(31, 32, 121, 122, { lat: 31.5, lng: 121.5 }, 18)))
-    await waitFor(() => expect(result.current.state.error).toContain('Could not load'), {
+    await waitFor(() => expect(result.current.state.error).toContain('temporarily unavailable'), {
         timeout: 4000,
     })
     expect(result.current.markers).toEqual([])
@@ -310,7 +310,7 @@ it('never falls back to another language after a region failure', async () => {
     vi.mocked(reads.readViewport).mockRejectedValue(new ApiError(503, 'Offline'))
     rerender({ lang: 'zh' })
     act(() => result.current.onView(mapView(31, 32, 121, 122, { lat: 31.5, lng: 121.5 }, 14)))
-    await waitFor(() => expect(result.current.state.error).toContain('Could not load'), {
+    await waitFor(() => expect(result.current.state.error).toContain('temporarily unavailable'), {
         timeout: 4000,
     })
     expect(result.current.markers).toEqual([])
@@ -327,7 +327,7 @@ it('keeps a 404-pruned point dead after closing detail while the region keeps fa
     // A new region that ultimately fails: the last success is retained.
     vi.mocked(reads.readViewport).mockRejectedValue(new ApiError(503, 'Offline'))
     act(() => result.current.onView(mapView(31, 32, 121, 122, { lat: 31.5, lng: 121.5 }, 16)))
-    await waitFor(() => expect(result.current.state.error).toContain('Could not load'), {
+    await waitFor(() => expect(result.current.state.error).toContain('temporarily unavailable'), {
         timeout: 4000,
     })
     expect(result.current.markers).toHaveLength(1)
@@ -340,7 +340,7 @@ it('keeps a 404-pruned point dead after closing detail while the region keeps fa
     // would resurrect the withdrawn marker.
     rerender({ id: null })
     act(() => result.current.onView(mapView(31, 32, 121, 122, { lat: 31.5, lng: 121.5 }, 17)))
-    await waitFor(() => expect(result.current.state.error).toContain('Could not load'), {
+    await waitFor(() => expect(result.current.state.error).toContain('temporarily unavailable'), {
         timeout: 4000,
     })
     expect(result.current.markers).toEqual([])

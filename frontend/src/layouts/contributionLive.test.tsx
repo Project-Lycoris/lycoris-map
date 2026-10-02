@@ -1,3 +1,4 @@
+import { BrowserDraftJournal } from '@/features/contributions/DraftJournal'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -14,6 +15,9 @@ afterEach(() => {
     vi.unstubAllGlobals()
 })
 function mount(clusterSize = 0) {
+    vi.spyOn(BrowserDraftJournal.prototype, 'list').mockResolvedValue([])
+    vi.spyOn(BrowserDraftJournal.prototype, 'put').mockResolvedValue(undefined)
+    vi.spyOn(BrowserDraftJournal.prototype, 'remove').mockResolvedValue(undefined)
     let resetSession = () => {}
     let mobile = false,
         store: ContributionStore | null = null
@@ -111,7 +115,7 @@ it('submits the phone map click coordinates and preserves them in the save recei
     fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), {
         target: { value: '所选位置' },
     })
-    fireEvent.click(screen.getByRole('radio', { name: 'Accessible Toilets' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Accessible Toilets' }))
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
     await waitFor(() => expect(write).toHaveBeenCalledTimes(1))
     expect(write.mock.calls[0]![0]).toMatchObject({ ...selected, title: '所选位置' })
@@ -145,7 +149,7 @@ it('reopens the same submitting form from Contribute, without creating another r
     fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), {
         target: { value: 'Synthetic' },
     })
-    fireEvent.click(screen.getByRole('radio', { name: 'Accessible Toilets' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Accessible Toilets' }))
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
     await waitFor(() => expect(write).toHaveBeenCalledTimes(1))
     fireEvent.click(screen.getByRole('button', { name: 'Close contribution form' }))

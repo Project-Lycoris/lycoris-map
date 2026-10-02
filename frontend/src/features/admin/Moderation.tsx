@@ -1,3 +1,4 @@
+import { FacilityTags } from '@/features/places/FacilityTags'
 import { VenueTag } from '@/features/places/VenueTag'
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -201,6 +202,7 @@ function ReviewCard({
             </p>
             {entry.kind !== 'images' && (
                 <>
+                    <FacilityTags place={entry.item} />
                     <VenueTag place={entry.item} />
                     <p className="admin-category">
                         {categoryBadges[entry.item.category] && (
@@ -213,6 +215,9 @@ function ReviewCard({
                         {ui.message('Location')}: {entry.item.lat}, {entry.item.lng} ·{' '}
                         {openingHours(entry.item, ui.language)}
                     </p>
+                    {entry.kind === 'markers' && entry.item.openingHoursNote && (
+                        <p className="admin-description">{entry.item.openingHoursNote}</p>
+                    )}
                     {entry.kind === 'edits' && (
                         <>
                             <h3>{ui.message('Current place')}</h3>
@@ -224,6 +229,7 @@ function ReviewCard({
                                         {current.data.description || '—'}
                                     </p>
                                     <p>
+                                        <FacilityTags place={current.data} />
                                         <VenueTag place={current.data} />{' '}
                                         {ui.message(categoryLabels[current.data.category])} ·{' '}
                                         {ui.message(current.data.isPublic ? 'Public' : 'Private')} ·{' '}
@@ -255,8 +261,10 @@ function ReviewCard({
                                     )}
                                 </p>
                             )}
+                            <p className="place-hours-note">{current.data?.openingHoursNote}</p>
                             <h3>{ui.message('Proposed changes')}</h3>
                             <p>{entry.item.title}</p>
+                            <p className="place-hours-note">{entry.item.openingHoursNote}</p>
                             <p>
                                 {ui.message(categoryLabels[entry.item.category])} ·{' '}
                                 {ui.message(entry.item.isPublic ? 'Public' : 'Private')} ·{' '}

@@ -1,3 +1,4 @@
+import { readError } from '@/shared/api/readError'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Marker } from '@/shared/api/markers'
@@ -240,15 +241,9 @@ export function usePlaceBrowse(
         return allResults.filter((marker) => ids.has(marker.id))
     }, [allResults, clusterIds])
     const mode = clusterIds ? 'cluster' : term ? 'search' : nearby ? 'nearby' : 'map'
-    const errorText = (error: Error | null, detail = false) =>
-        error
-            ? detail && error instanceof ApiError && error.status === 404
-                ? 'This place is unavailable.'
-                : 'Could not load places. Try again.'
-            : null
     const state: PlaceReadState = {
         pending: debouncing || activeQuery.isPending,
-        error: debouncing ? null : errorText(activeQuery.error),
+        error: debouncing ? null : readError(activeQuery.error),
         retry: () => {
             void activeQuery.refetch()
         },
@@ -259,7 +254,7 @@ export function usePlaceBrowse(
         error:
             rawMarkerId !== null && id === null
                 ? 'This place link is invalid.'
-                : errorText(detailQuery.error, true),
+                : readError(detailQuery.error),
         retry: () => {
             if (id) void detailQuery.refetch()
         },

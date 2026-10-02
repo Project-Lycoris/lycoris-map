@@ -328,6 +328,10 @@ export function MapShell({
         close,
         state: contributionState,
         onSubmit: contributor ? submitContribution : undefined,
+        onPhotos: contributor ? (files: File[]) => void contributor.addPhotos(files) : undefined,
+        onRemovePhoto: contributor
+            ? (index: number) => void contributor.removePhoto(index)
+            : undefined,
         onPhoto: contributor
             ? (file: File | null) => {
                   void contributor.photo(file)
@@ -652,11 +656,17 @@ export function MapShell({
                         }
                     />
                 )}
-                {browse?.mode === 'map' && browse.state.error && (
+                {browse && (browse.state.error || browse.detailState.error) && (
                     <MapNotice
-                        key={`places:${browse.state.error}`}
-                        message={browse.state.error}
-                        onRetry={browse.state.retry}
+                        key={`places:${browse.detailState.error || browse.state.error}`}
+                        message={(browse.detailState.error || browse.state.error)!}
+                        onRetry={
+                            browse.detailState.error
+                                ? browse.detailState.retryable === false
+                                    ? undefined
+                                    : browse.detailState.retry
+                                : browse.state.retry
+                        }
                     />
                 )}
             </div>

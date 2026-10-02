@@ -11,7 +11,9 @@ export function PlaceHours({ place, language }: { place: Marker; language: Langu
     return (
         <span className={`place-hours place-hours-${status}`}>
             {status === 'closing-soon' && <>{ui.text('Closing soon')} · </>}
-            {openingHours(place, language)}
+            {place.openingHoursNote?.trim()
+                ? ui.text('See opening hours note')
+                : openingHours(place, language)}
         </span>
     )
 }

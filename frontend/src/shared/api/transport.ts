@@ -98,7 +98,7 @@ async function fetchWithinDeadline(
         response = await deadline.guard(fetch(url, init))
     } catch (error) {
         if (deadline.reason() === 'timeout')
-            throw ApiError.network('Request timed out. Please try again.')
+            throw ApiError.network('Request timed out. Please try again.', undefined, 'timeout')
         if (error instanceof DOMException && error.name === 'AbortError') throw error
         throw ApiError.network('网络请求失败，请检查网络连接')
     }
@@ -107,7 +107,7 @@ async function fetchWithinDeadline(
         body = await deadline.guard(parse(response))
     } catch (error) {
         if (deadline.reason() === 'timeout')
-            throw ApiError.network('Request timed out. Please try again.')
+            throw ApiError.network('Request timed out. Please try again.', undefined, 'timeout')
         if (error instanceof DOMException && error.name === 'AbortError') throw error
         throw ApiError.network(
             'Response interrupted. Please try again.',

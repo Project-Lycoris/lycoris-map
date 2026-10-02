@@ -102,7 +102,7 @@ function ResultList({
                 </p>
             )}
             <ReadMessage state={state} empty={results.length === 0} />
-            {!state.pending && !state.error && results.length > 0 && (
+            {results.length > 0 && (
                 <div
                     ref={(element) => {
                         scroller.current = element

@@ -15,7 +15,11 @@ export function MarkerEditor({ marker, close }: { marker: Marker; close: () => v
     const [draft, setDraft] = useState<MarkerText>({
         title: marker.title,
         category: marker.category,
-        venueType: marker.category === 'accessible_toilet' ? (marker.venueType ?? null) : null,
+        categories: marker.categories ?? [marker.category],
+        openingHoursNote: marker.openingHoursNote ?? '',
+        venueType: (marker.categories ?? [marker.category]).includes('accessible_toilet')
+            ? (marker.venueType ?? null)
+            : null,
         description: marker.description ?? '',
         isPublic: marker.isPublic,
         openTimeStart: marker.openTimeStart ?? '',
@@ -54,29 +58,57 @@ export function MarkerEditor({ marker, close }: { marker: Marker; close: () => v
                         value={draft.title}
                         onChange={(e) => setDraft({ ...draft, title: e.target.value })}
                     />
-                    <label className="admin-field">
-                        {ui.message('Category')}
-                        <select
-                            value={draft.category}
-                            onChange={(e) =>
-                                setDraft({
-                                    ...draft,
-                                    category: e.target.value as MarkerText['category'],
-                                    venueType:
-                                        e.target.value === 'accessible_toilet'
-                                            ? (draft.venueType ?? 'other')
-                                            : null,
-                                })
-                            }
-                        >
-                            {Object.entries(categoryLabels).map(([value, label]) => (
-                                <option key={value} value={value}>
+                    <fieldset className="admin-field">
+                        <legend>{ui.message('Category')}</legend>
+                        {Object.entries(categoryLabels).map(([value, label]) => {
+                            const category = value as MarkerText['category'],
+                                selected = draft.categories ?? [draft.category]
+                            return (
+                                <label key={value}>
+                                    <input
+                                        type="checkbox"
+                                        checked={selected.includes(category)}
+                                        onChange={() => {
+                                            const next = selected.includes(category)
+                                                ? selected.filter((v) => v !== category)
+                                                : [...selected, category]
+                                            setDraft({
+                                                ...draft,
+                                                category: next[0] ?? draft.category,
+                                                categories: next,
+                                                venueType: next.includes('accessible_toilet')
+                                                    ? (draft.venueType ?? 'other')
+                                                    : null,
+                                            })
+                                        }}
+                                    />
                                     {ui.message(label)}
-                                </option>
-                            ))}
-                        </select>
-                    </label>
-                    {draft.category === 'accessible_toilet' && (
+                                    {selected.includes(category) && selected.length > 1 && (
+                                        <DesignButton
+                                            disabled={selected[0] === category}
+                                            onClick={() =>
+                                                setDraft({
+                                                    ...draft,
+                                                    category,
+                                                    categories: [
+                                                        category,
+                                                        ...selected.filter((v) => v !== category),
+                                                    ],
+                                                })
+                                            }
+                                        >
+                                            {ui.message(
+                                                selected[0] === category
+                                                    ? 'Primary type'
+                                                    : 'Make primary',
+                                            )}
+                                        </DesignButton>
+                                    )}
+                                </label>
+                            )
+                        })}
+                    </fieldset>
+                    {(draft.categories ?? [draft.category]).includes('accessible_toilet') && (
                         <label className="admin-field">
                             {ui.message('Venue type')}
                             <select
@@ -116,6 +148,17 @@ export function MarkerEditor({ marker, close }: { marker: Marker; close: () => v
                         value={draft.openTimeEnd}
                         onChange={(e) => setDraft({ ...draft, openTimeEnd: e.target.value })}
                     />
+                    <label className="admin-field">
+                        {ui.message('Opening hours note')}
+                        <textarea
+                            rows={3}
+                            maxLength={1000}
+                            value={draft.openingHoursNote ?? ''}
+                            onChange={(e) =>
+                                setDraft({ ...draft, openingHoursNote: e.target.value })
+                            }
+                        />
+                    </label>
                     <div className="admin-actions">
                         <DesignButton type="submit">{ui.message('Save')}</DesignButton>
                         <DesignButton onClick={close}>{ui.message('Cancel')}</DesignButton>

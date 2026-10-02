@@ -5,7 +5,11 @@ import { useEffect, useId, useRef } from 'react'
 import { CategoryBadge, DesignButton, IconButton } from './primitives'
 import { FigmaIcon } from '@/shared/ui/figma-icon'
 import './contribution-form.css'
-import type { ContributionDraft } from '@/features/contributions/draft'
+import {
+    draftCategories,
+    draftPhotos,
+    type ContributionDraft,
+} from '@/features/contributions/draft'
 import {
     contributionBusy,
     type ContributionSnapshot,
@@ -21,6 +25,8 @@ export type ContributionFormProps = {
     state?: ContributionSnapshot | null | undefined
     onSubmit?: ((resendUnconfirmed?: boolean) => void) | undefined
     onPhoto?: ((file: File | null) => void) | undefined
+    onPhotos?: ((files: File[]) => void) | undefined
+    onRemovePhoto?: ((index: number) => void) | undefined
     onView?: (() => void) | undefined
 }
 
@@ -33,9 +39,13 @@ export function ContributionForm({
     state,
     onSubmit,
     onPhoto,
+    onPhotos,
+    onRemovePhoto,
     onView,
 }: ContributionFormProps) {
     const ui = useUi()
+    const selected = draftCategories(draft),
+        photos = draftPhotos(draft)
     const id = useId()
     const heading = useRef<HTMLHeadingElement>(null)
     const photoInput = useRef<HTMLInputElement>(null)
@@ -72,7 +82,7 @@ export function ContributionForm({
     ] as const
     return (
         <form
-            className={`contribution-form ${mobile ? 'contribution-form-mobile' : ''} ${state ? 'contribution-form-live' : ''} ${draft.category === 'toilet' ? 'has-venue' : ''}`}
+            className={`contribution-form contribution-form-flow ${mobile ? 'contribution-form-mobile' : ''} ${state ? 'contribution-form-live' : ''} ${selected.includes('toilet') ? 'has-venue' : ''}`}
             aria-label={ui.text(state?.base ? 'Edit proposal' : 'Contribution draft')}
             aria-busy={busy || undefined}
             data-lat={import.meta.env.DEV ? point?.lat : undefined}
@@ -110,50 +120,65 @@ export function ContributionForm({
             </span>
             <div
                 className="contribution-categories"
-                role="radiogroup"
+                role="group"
                 aria-labelledby={`${id}-category`}
             >
-                {categories.map(([category, label], index) => (
-                    <DesignButton
-                        key={category}
-                        role="radio"
-                        aria-label={ui.message(label)}
-                        aria-checked={draft.category === category}
-                        disabled={locked}
-                        tabIndex={
-                            draft.category === category || (draft.category === null && index === 0)
-                                ? 0
-                                : -1
-                        }
-                        onClick={() => update('category', category)}
-                        onKeyDown={(event) => {
-                            if (
-                                !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(
-                                    event.key,
-                                )
-                            )
-                                return
-                            event.preventDefault()
-                            const next =
-                                (index +
-                                    (event.key === 'ArrowLeft' || event.key === 'ArrowUp'
-                                        ? 2
-                                        : 1)) %
-                                3
-                            update('category', categories[next]![0])
-                            event.currentTarget.parentElement
-                                ?.querySelectorAll<HTMLButtonElement>('[role=radio]')
-                                [next]?.focus()
-                        }}
-                    >
-                        <CategoryBadge category={category} />
-                    </DesignButton>
+                {categories.map(([category, label]) => (
+                    <div key={category} className="contribution-type">
+                        <DesignButton
+                            role="checkbox"
+                            aria-label={ui.message(label)}
+                            aria-checked={selected.includes(category)}
+                            disabled={locked}
+                            onClick={() => {
+                                const next = selected.includes(category)
+                                    ? selected.filter((value) => value !== category)
+                                    : [...selected, category]
+                                onChange({
+                                    ...draft,
+                                    category: next[0] ?? null,
+                                    categories: next,
+                                    venueType: next.includes('toilet')
+                                        ? (draft.venueType ?? 'other')
+                                        : null,
+                                })
+                            }}
+                        >
+                            <CategoryBadge category={category} />
+                            {selected.includes(category) && (
+                                <span className="type-order">{selected.indexOf(category) + 1}</span>
+                            )}
+                        </DesignButton>
+                        {selected.length > 1 && selected.includes(category) && (
+                            <DesignButton
+                                className="primary-type"
+                                disabled={locked || selected[0] === category}
+                                onClick={() =>
+                                    onChange({
+                                        ...draft,
+                                        category,
+                                        categories: [
+                                            category,
+                                            ...selected.filter((value) => value !== category),
+                                        ],
+                                    })
+                                }
+                            >
+                                {ui.text(
+                                    selected[0] === category ? 'Primary type' : 'Make primary',
+                                )}
+                            </DesignButton>
+                        )}
+                    </div>
                 ))}
                 {draft.category === 'custom' && (
                     <span className="contribution-custom-category">{ui.text('Custom')}</span>
                 )}
             </div>
-            {draft.category === 'toilet' && (
+            <p className="contribution-help">
+                {ui.text('Select all facilities here. The first type sets the pin color.')}
+            </p>
+            {selected.includes('toilet') && (
                 <div className="contribution-venue">
                     <label className="contribution-label" htmlFor={`${id}-venue`}>
                         {ui.text('Venue type')}
@@ -235,20 +260,34 @@ export function ContributionForm({
                     </div>
                 )
             })}
+            <label className="contribution-label" htmlFor={`${id}-hours-note`}>
+                {ui.text('Opening hours note')}
+            </label>
+            <textarea
+                id={`${id}-hours-note`}
+                className="contribution-input contribution-hours-note"
+                rows={3}
+                maxLength={1000}
+                value={draft.openingHoursNote ?? ''}
+                disabled={locked}
+                onChange={(event) => update('openingHoursNote', event.target.value)}
+            />
             <span className="contribution-label upload-label" id={`${id}-photo-label`}>
                 {ui.text('Upload Photo (Optional)')}
             </span>
             <input
                 ref={photoInput}
                 type="file"
+                multiple
                 accept="image/jpeg,image/png,image/gif,image/webp"
                 aria-labelledby={`${id}-photo-label`}
                 hidden
                 onChange={(event) => {
-                    const photo = event.target.files?.[0]
-                    if (photo) {
-                        if (onPhoto) onPhoto(photo)
-                        else update('photo', photo)
+                    const files = Array.from(event.target.files ?? [])
+                    if (files.length) {
+                        if (onPhotos) onPhotos(files)
+                        else if (onPhoto) onPhoto(files[0]!)
+                        else onChange({ ...draft, photo: files[0]!, photos: [...photos, ...files] })
                     }
                     event.target.value = ''
                 }}
@@ -271,15 +310,24 @@ export function ContributionForm({
                     {state.base && (
                         <p>{ui.text('Location is fixed. Changes are submitted for review.')}</p>
                     )}
-                    {draft.photo && (
-                        <p className="contribution-photo-name">
-                            {draft.photo.name}{' '}
-                            {['draft', 'photo-error'].includes(state.phase) && (
-                                <DesignButton onClick={() => onPhoto?.(null)}>
-                                    {ui.text('Remove')}
-                                </DesignButton>
-                            )}
+                    {photos.map((photo, index) => (
+                        <p className="contribution-photo-name" key={`${index}:${photo.name}`}>
+                            {index + 1}. {photo.name}
+                            {index < state.uploadedCount
+                                ? ' ✓'
+                                : ['draft', 'photo-error'].includes(state.phase) && (
+                                      <DesignButton
+                                          onClick={() =>
+                                              onRemovePhoto ? onRemovePhoto(index) : onPhoto?.(null)
+                                          }
+                                      >
+                                          {ui.text('Remove')}
+                                      </DesignButton>
+                                  )}
                         </p>
+                    ))}
+                    {state.persistenceError && (
+                        <p role="alert">{ui.message(state.persistenceError)}</p>
                     )}
                     <p role={state.error ? 'alert' : 'status'}>
                         {ui.message(

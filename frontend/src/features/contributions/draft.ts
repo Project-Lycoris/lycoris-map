@@ -6,6 +6,9 @@ import type { LatLng } from '@/features/map/coords'
 export type ContributionDraft = {
     title: string
     category: 'toilet' | 'nursing' | 'medical' | 'custom' | null
+    categories?: Array<'toilet' | 'nursing' | 'medical' | 'custom'>
+    openingHoursNote?: string
+    photos?: File[]
     venueType: VenueType | null
     description: string
     openingHour: string
@@ -19,6 +22,9 @@ export const emptyContributionDraft: ContributionDraft = {
     title: '',
     category: null,
     venueType: 'other',
+    categories: [],
+    openingHoursNote: '',
+    photos: [],
     description: '',
     openingHour: '',
     openingMinute: '',
@@ -27,7 +33,7 @@ export const emptyContributionDraft: ContributionDraft = {
     isPublic: true,
     photo: null,
 }
-const categories = {
+export const categories = {
     toilet: 'accessible_toilet',
     nursing: 'baby_room',
     medical: 'friendly_clinic',
@@ -42,6 +48,13 @@ export function draftFromMarker(marker: Marker): ContributionDraft {
     return {
         ...emptyContributionDraft,
         category,
+        categories: (marker.categories ?? [marker.category]).flatMap((value) => {
+            const key = (Object.keys(categories) as (keyof typeof categories)[]).find(
+                (key) => categories[key] === value,
+            )
+            return key ? [key] : []
+        }),
+        openingHoursNote: marker.openingHoursNote ?? '',
         venueType: marker.venueType ?? null,
         title: marker.title,
         description: marker.description ?? '',
@@ -55,7 +68,8 @@ export function draftFromMarker(marker: Marker): ContributionDraft {
 export function draftText(draft: ContributionDraft, _language: Language): MarkerText {
     const title = draft.title.trim()
     if (!title || [...title].length > 120) throw new Error('Enter a title of 1–120 characters.')
-    if (!draft.category) throw new Error('Choose a category.')
+    const selected = draftCategories(draft)
+    if (!selected.length) throw new Error('Choose a category.')
     const values = [draft.openingHour, draft.openingMinute, draft.closingHour, draft.closingMinute]
     if (
         values.some(Boolean) &&
@@ -67,8 +81,14 @@ export function draftText(draft: ContributionDraft, _language: Language): Marker
         throw new Error('Complete both opening and closing times, or leave all four fields empty.')
     return {
         title,
-        category: categories[draft.category],
-        venueType: draft.category === 'toilet' ? draft.venueType : null,
+        category: categories[selected[0]!],
+        ...(draft.categories?.length
+            ? { categories: selected.map((value) => categories[value]) }
+            : {}),
+        ...(draft.openingHoursNote !== undefined
+            ? { openingHoursNote: draft.openingHoursNote }
+            : {}),
+        venueType: selected.includes('toilet') ? draft.venueType : null,
         description: draft.description,
         language: 'zh',
         isPublic: draft.isPublic,
@@ -89,4 +109,11 @@ export function checkPoint(point: LatLng | null): asserts point is LatLng {
         Math.abs(point.lng) > 180
     )
         throw new Error('Choose the place location on the map before submitting.')
+}
+
+export function draftCategories(draft: ContributionDraft): Array<keyof typeof categories> {
+    return draft.categories?.length ? draft.categories : draft.category ? [draft.category] : []
+}
+export function draftPhotos(draft: ContributionDraft): File[] {
+    return draft.photos?.length ? draft.photos : draft.photo ? [draft.photo] : []
 }
