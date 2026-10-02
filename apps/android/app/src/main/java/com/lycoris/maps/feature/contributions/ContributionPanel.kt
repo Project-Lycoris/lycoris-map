@@ -42,7 +42,11 @@ fun ContributionPanel(
         // Coordinator owns the ordered queue so leaving the form does not cancel the final keystroke.
         fun change(next: ContributionFields) { fields = next; coordinator.enqueueFields(draft.id, next) }
         val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
-            if (uris.isNotEmpty()) command { uris.forEach { coordinator.importPhoto(draft.id, it, append = draft.editable) } }
+            if (uris.isNotEmpty()) command { uris.forEach { coordinator.importPhoto(draft.id, it, append = true) } }
+        }
+        // Replacing one rejected upload must leave the remaining queue intact.
+        val replacementPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+            if (uri != null) command { coordinator.importPhoto(draft.id, uri, append = false) }
         }
         fun time(start: Boolean) {
             val value = if (start) fields.openTimeStart else fields.openTimeEnd
@@ -96,7 +100,10 @@ fun ContributionPanel(
                     if (draft.editable) TextButton({ command { coordinator.removePhoto(draft.id, photo.id) } }) { Text(if (zh) "移除图片" else "Remove photo") }
                 }
             }
-            if (draft.canReplacePhoto) OutlinedButton({ picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, Modifier.fillMaxWidth()) {
+            if (draft.canReplacePhoto) OutlinedButton({
+                val request = PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                if (draft.editable) picker.launch(request) else replacementPicker.launch(request)
+            }, Modifier.fillMaxWidth()) {
                 Text(if (zh) { if (draft.editable) "添加图片" else "更换图片" } else { if (draft.editable) "Add photos" else "Replace photo" })
             }
             when (draft.phase) {
