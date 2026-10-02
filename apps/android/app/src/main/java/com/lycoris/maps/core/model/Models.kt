@@ -44,11 +44,18 @@ data class Marker(
     val updatedAt: String = "",
     val venueType: String? = null,
     val hoursTimezone: String? = null,
+    val categories: List<String>? = null,
+    val openingHoursNote: String? = null,
+    val photos: List<MarkerPhoto> = emptyList(),
 ) {
+    val facilityCategories: List<String> get() = categories?.takeIf { it.isNotEmpty() } ?: listOf(category)
     val placeCategory: PlaceCategory get() = PlaceCategory.fromWire(category)
     val hasValidLocation: Boolean get() = id > 0 && validCoordinate(lat, lng)
     val publiclyVisible: Boolean get() = isPublic && reviewStatus == "APPROVED" && !deactivated
 }
+
+@Serializable
+data class MarkerPhoto(val id: Long, val url: String, val sortOrder: Long)
 
 @Serializable
 data class User(

@@ -17,7 +17,7 @@ internal class AppNotices {
     }
 
     @Synchronized
-    fun showBackground(value: String) {
+    fun showBackground(value: String?) {
         if (!hasActionNotice) mutable.value = value
     }
 }

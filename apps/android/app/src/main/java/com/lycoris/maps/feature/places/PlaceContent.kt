@@ -83,7 +83,16 @@ fun PlaceDetailContent(place: Marker, clients: ApiClients, account: AccountState
             Text(distanceLabel(referenceLat, referenceLng, place.lat, place.lng), style = LycorisTextStyles.PlaceDistance, color = LycorisColors.SecondaryText)
         }
         PlaceMetadataRow(place, chinese)
-        if (!place.markImage.isNullOrBlank()) PlacePhoto(place, clients, account, Modifier.fillMaxWidth().aspectRatio(16f / 9).clip(RoundedCornerShape(16.dp)), true, chinese)
+        if (!place.openingHoursNote.isNullOrBlank()) Text(place.openingHoursNote, style = MaterialTheme.typography.bodyMedium)
+        var selectedPhoto by remember(place.id) { mutableIntStateOf(0) }
+        val album = place.photos.map { it.url }.ifEmpty { listOfNotNull(place.markImage) }
+        val shown = if (album.isEmpty()) place else place.copy(markImage = album[selectedPhoto.coerceIn(album.indices)])
+        if (!shown.markImage.isNullOrBlank()) PlacePhoto(shown, clients, account, Modifier.fillMaxWidth().aspectRatio(16f / 9).clip(RoundedCornerShape(16.dp)), true, chinese)
+        if (album.size > 1) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            TextButton({ selectedPhoto-- }, enabled = selectedPhoto > 0) { Text(if (chinese) "上一张" else "Previous photo") }
+            Text("${selectedPhoto + 1} / ${album.size}")
+            TextButton({ selectedPhoto++ }, enabled = selectedPhoto < album.lastIndex) { Text(if (chinese) "下一张" else "Next photo") }
+        }
         place.description?.takeIf(String::isNotBlank)?.let { Text(it, style = LycorisTextStyles.PlaceDescription) }
         if (place.reviewStatus != "APPROVED") Text(if (chinese) "待审核" else "Pending review", color = LycorisColors.Primary)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {

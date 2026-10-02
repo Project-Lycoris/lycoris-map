@@ -37,13 +37,12 @@ fun ContributionPanel(
     key(draft.id) {
         var fields by remember { mutableStateOf(draft.fields) }
         var venuesOpen by remember { mutableStateOf(false) }
-        var categoriesOpen by remember { mutableStateOf(false) }
         var confirmDiscard by remember { mutableStateOf(false) }
         val context = LocalContext.current
         // Coordinator owns the ordered queue so leaving the form does not cancel the final keystroke.
         fun change(next: ContributionFields) { fields = next; coordinator.enqueueFields(draft.id, next) }
-        val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-            if (uri != null) command { coordinator.importPhoto(draft.id, uri) }
+        val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
+            if (uris.isNotEmpty()) command { uris.forEach { coordinator.importPhoto(draft.id, it, append = draft.editable) } }
         }
         fun time(start: Boolean) {
             val value = if (start) fields.openTimeStart else fields.openTimeEnd
@@ -58,15 +57,17 @@ fun ContributionPanel(
             Text(String.format(Locale.ROOT, "%.6f, %.6f", draft.latitude, draft.longitude), style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(fields.title, { change(fields.copy(title = it)) }, Modifier.fillMaxWidth(), enabled = draft.editable,
                 label = { Text(if (zh) "点位名称" else "Place name") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next))
-            Box {
-                OutlinedButton({ categoriesOpen = true }, Modifier.fillMaxWidth(), enabled = draft.editable) { Text(categoryName(fields.category, zh)) }
-                DropdownMenu(categoriesOpen, { categoriesOpen = false }) {
-                    PlaceCategory.entries.forEach { category -> DropdownMenuItem(text = { Text(categoryName(category.wireValue, zh)) }, onClick = {
-                        change(fields.withCategory(category.wireValue)); categoriesOpen = false
-                    }) }
+            PlaceCategory.entries.forEach { category ->
+                val selected = category.wireValue in fields.selectedCategories
+                Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Checkbox(selected, { checked -> change(fields.withCategories(if (checked) fields.selectedCategories + category.wireValue else fields.selectedCategories.filter { it != category.wireValue })) }, enabled = draft.editable)
+                    Text(categoryName(category.wireValue, zh), Modifier.weight(1f))
+                    if (selected && category.wireValue != fields.selectedCategories.first()) TextButton({ change(fields.withCategories(listOf(category.wireValue) + fields.selectedCategories.filter { it != category.wireValue })) }, enabled = draft.editable) {
+                        Text(if (zh) "设为首选" else "Make primary")
+                    }
                 }
             }
-            if (fields.category == PlaceCategory.ACCESSIBLE_TOILET.wireValue) {
+            if (PlaceCategory.ACCESSIBLE_TOILET.wireValue in fields.selectedCategories) {
                 Text(if (zh) "场所类型" else "Venue type", style = MaterialTheme.typography.labelLarge)
                 Box {
                     OutlinedButton({ venuesOpen = true }, Modifier.fillMaxWidth(), enabled = draft.editable) {
@@ -87,12 +88,16 @@ fun ContributionPanel(
                 OutlinedButton({ time(false) }, Modifier.weight(1f), enabled = draft.editable) { Text(fields.openTimeEnd.ifEmpty { if (zh) "结束" else "To" }) }
                 if (fields.openTimeStart.isNotEmpty() || fields.openTimeEnd.isNotEmpty()) IconButton({ change(fields.copy(openTimeStart = "", openTimeEnd = "")) }, enabled = draft.editable) { Icon(Icons.Rounded.Close, if (zh) "清除时间" else "Clear hours") }
             }
-            if (draft.photo != null) {
-                Text(if (zh) "已选择图片 · ${draft.photo.width} × ${draft.photo.height}" else "Photo selected · ${draft.photo.width} × ${draft.photo.height}", style = MaterialTheme.typography.bodyMedium)
-                if (draft.editable) TextButton({ command { coordinator.removePhoto(draft.id) } }) { Text(if (zh) "移除图片" else "Remove photo") }
+            OutlinedTextField(fields.openingHoursNote.orEmpty(), { change(fields.copy(openingHoursNote = it)) }, Modifier.fillMaxWidth(), enabled = draft.editable,
+                label = { Text(if (zh) "营业时间备注" else "Opening hours note") }, minLines = 2, maxLines = 5)
+            draft.remainingPhotos.forEachIndexed { index, photo ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Text("${draft.uploadedPhotoCount + index + 1}. ${photo.width} × ${photo.height}", Modifier.weight(1f))
+                    if (draft.editable) TextButton({ command { coordinator.removePhoto(draft.id, photo.id) } }) { Text(if (zh) "移除图片" else "Remove photo") }
+                }
             }
             if (draft.canReplacePhoto) OutlinedButton({ picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, Modifier.fillMaxWidth()) {
-                Text(if (zh) { if (draft.photo == null) "添加图片" else "更换图片" } else { if (draft.photo == null) "Add photo" else "Replace photo" })
+                Text(if (zh) { if (draft.editable) "添加图片" else "更换图片" } else { if (draft.editable) "Add photos" else "Replace photo" })
             }
             when (draft.phase) {
                 DraftPhase.DRAFT -> {

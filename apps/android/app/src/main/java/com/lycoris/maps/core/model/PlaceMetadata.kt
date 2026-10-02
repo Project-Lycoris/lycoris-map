@@ -12,6 +12,7 @@ enum class VenueType(val wireValue: String, private val zh: String, private val 
     RAILWAY_STATION("railway_station", "火车站", "Railway station"),
     SCHOOL("school", "学校", "School"),
     PUBLIC_TOILET("public_toilet", "公共卫生间", "Public toilet"),
+    PARK("park", "公园", "Park"),
     AIRPORT("airport", "机场", "Airport"),
     OTHER("other", "其他", "Other");
 
@@ -21,7 +22,7 @@ enum class VenueType(val wireValue: String, private val zh: String, private val 
     }
 }
 
-val Marker.venue: VenueType? get() = if (category == "accessible_toilet") VenueType.fromWire(venueType) else null
+val Marker.venue: VenueType? get() = if ("accessible_toilet" in facilityCategories) VenueType.fromWire(venueType) else null
 
 enum class OpeningStatus { UNKNOWN, SCHEDULED, OPEN, CLOSED, CLOSING_SOON }
 
@@ -30,6 +31,7 @@ private fun time(value: String?): LocalTime? = value?.takeIf(hoursPattern::match
 
 /** Matches Web/API daily hours: inclusive opening, exclusive closing, equal endpoints mean 24h. */
 fun Marker.openingStatus(now: Instant): OpeningStatus {
+    if (!openingHoursNote.isNullOrBlank()) return OpeningStatus.SCHEDULED
     val start = time(openTimeStart) ?: return OpeningStatus.UNKNOWN
     val end = time(openTimeEnd) ?: return OpeningStatus.UNKNOWN
     if (start == end) return OpeningStatus.OPEN
@@ -44,6 +46,7 @@ fun Marker.openingStatus(now: Instant): OpeningStatus {
 }
 
 fun Marker.hoursLabel(chinese: Boolean): String? {
+    if (!openingHoursNote.isNullOrBlank()) return if (chinese) "开放时间见备注" else "See opening hours note"
     val start = time(openTimeStart) ?: return null
     val end = time(openTimeEnd) ?: return null
     return if (start == end) { if (chinese) "全天开放" else "Open 24 hours" } else "$openTimeStart–$openTimeEnd"

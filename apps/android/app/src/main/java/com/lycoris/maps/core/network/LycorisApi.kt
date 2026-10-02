@@ -59,6 +59,8 @@ data class CreateMarkerRequest(
     val openTimeEnd: String? = null,
     val clientRequestId: String,
     val venueType: String? = null,
+    val categories: List<String>? = null,
+    val openingHoursNote: String? = null,
 )
 
 @Serializable
@@ -70,6 +72,8 @@ data class EditMarkerRequest(
     val openTimeStart: String? = null,
     val openTimeEnd: String? = null,
     val venueType: String? = null,
+    val categories: List<String>? = null,
+    val openingHoursNote: String? = null,
 )
 
 @Serializable

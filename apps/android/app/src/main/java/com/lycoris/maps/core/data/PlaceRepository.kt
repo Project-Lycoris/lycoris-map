@@ -109,7 +109,7 @@ class PlaceRepository(
     // re-filters existing and in-flight results without new requests or affecting Nearby.
     fun searchResults(types: Flow<SearchType>): Flow<PlaceListState> = combine(search, types) { result, type ->
         val category = type.category
-        if (category == null) result else result.copy(places = result.places.filter { it.placeCategory == category })
+        if (category == null) result else result.copy(places = result.places.filter { category.wireValue in it.facilityCategories })
     }
 
     fun loadNearby(lat: Double, lng: Double, radiusMeters: Int, category: PlaceCategory, language: Language): Job =

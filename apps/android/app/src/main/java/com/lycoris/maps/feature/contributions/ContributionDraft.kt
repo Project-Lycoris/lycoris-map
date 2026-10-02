@@ -23,20 +23,26 @@ data class ContributionFields(
     val openTimeEnd: String = "",
     val language: String = "zh",
     val venueType: String? = null,
+    val categories: List<String>? = null,
+    val openingHoursNote: String? = null,
 ) {
-    fun isValid(): Boolean = title.trim().isNotEmpty() && title.trim().let { it.codePointCount(0, it.length) <= 120 } &&
-        (venueType == null || (category == PlaceCategory.ACCESSIBLE_TOILET.wireValue && VenueType.fromWire(venueType) != null)) &&
+    val selectedCategories: List<String> get() = categories?.takeIf { it.isNotEmpty() } ?: listOf(category)
+    fun withCategories(values: List<String>): ContributionFields = if (values.isEmpty()) this else copy(category = values.first(), categories = values.distinct(),
+        venueType = if (PlaceCategory.ACCESSIBLE_TOILET.wireValue in values) venueType else null)
+    fun isValid(): Boolean = (openingHoursNote?.let { it.codePointCount(0, it.length) } ?: 0) <= 1000 &&
+        selectedCategories.size in 1..4 && selectedCategories.distinct().size == selectedCategories.size && selectedCategories.all { value -> PlaceCategory.entries.any { it.wireValue == value } } && title.trim().isNotEmpty() && title.trim().let { it.codePointCount(0, it.length) <= 120 } &&
+        (venueType == null || (PlaceCategory.ACCESSIBLE_TOILET.wireValue in selectedCategories && VenueType.fromWire(venueType) != null)) &&
         category in PlaceCategory.entries.map { it.wireValue } && language in setOf("en", "zh") &&
         ((openTimeStart.isEmpty() && openTimeEnd.isEmpty()) || (validTime(openTimeStart) && validTime(openTimeEnd)))
 
-    val submittedVenueType: String? get() = if (category == PlaceCategory.ACCESSIBLE_TOILET.wireValue) venueType ?: VenueType.OTHER.wireValue else null
+    val submittedVenueType: String? get() = if (PlaceCategory.ACCESSIBLE_TOILET.wireValue in selectedCategories) venueType ?: VenueType.OTHER.wireValue else null
 
-    fun withCategory(value: String) = copy(category = value, venueType = if (value == PlaceCategory.ACCESSIBLE_TOILET.wireValue) venueType else null)
+    fun withCategory(value: String) = copy(category = value, categories = listOf(value), venueType = if (value == PlaceCategory.ACCESSIBLE_TOILET.wireValue) venueType else null)
 
     companion object {
         fun fromMarker(marker: Marker): ContributionFields = ContributionFields(
             marker.title, marker.category, marker.description.orEmpty(), marker.openTimeStart.orEmpty(),
-            marker.openTimeEnd.orEmpty(), "zh", marker.venueType,
+            marker.openTimeEnd.orEmpty(), "zh", marker.venueType, marker.facilityCategories, marker.openingHoursNote.orEmpty(),
         )
         private fun validTime(value: String) = value.matches(Regex("(?:[01][0-9]|2[0-3]):[0-5][0-9]"))
     }
@@ -67,7 +73,10 @@ data class ContributionDraft(
     val attempts: Int = 0,
     val revision: Long = 0,
     val updatedAt: Long = 0,
+    val queuedPhotos: List<EncodedPhoto> = emptyList(),
+    val uploadedPhotoCount: Int = 0,
 ) {
+    val remainingPhotos: List<EncodedPhoto> get() = listOfNotNull(photo) + queuedPhotos
     val editable: Boolean get() = phase == DraftPhase.DRAFT
     val hasTextChanges: Boolean get() = original == null || fields != ContributionFields.fromMarker(original)
     val canSubmit: Boolean get() = editable && fields.isValid() && (hasTextChanges || photo != null)
@@ -79,11 +88,11 @@ data class ContributionDraft(
         require(canSubmit)
         return if (original == null) LycorisJson.encodeToString(CreateMarkerRequest(
             latitude, longitude, fields.category, fields.title.trim(), fields.description, "zh",
-            fields.openTimeStart, fields.openTimeEnd, creationRequestId, venueType = fields.submittedVenueType,
+            fields.openTimeStart, fields.openTimeEnd, creationRequestId, venueType = fields.submittedVenueType, categories = fields.categories, openingHoursNote = fields.openingHoursNote,
         )) else LycorisJson.encodeToString(EditMarkerRequest(
             // Older saved drafts have no venue field. Omit it to preserve the server's later
             // classification; the API itself clears it when changing to another category.
-            fields.category, fields.title.trim(), fields.description, "zh", fields.openTimeStart, fields.openTimeEnd, venueType = fields.venueType,
+            fields.category, fields.title.trim(), fields.description, "zh", fields.openTimeStart, fields.openTimeEnd, venueType = fields.venueType, categories = fields.categories, openingHoursNote = fields.openingHoursNote,
         ))
     }
 
@@ -96,7 +105,7 @@ data class ContributionDraft(
         if (phase in setOf(DraftPhase.EDITING, DraftPhase.UNCERTAIN_EDIT) && original == null) return false
         if (phase in setOf(DraftPhase.UPLOADING, DraftPhase.COMPLETE) && markerId == null) return false
         if (phase == DraftPhase.UPLOADING && photo == null) return false
-        if (photo != null && !photo.isValid()) return false
+        if (uploadedPhotoCount < 0 || remainingPhotos.any { !it.isValid() } || remainingPhotos.distinctBy { it.id }.size != remainingPhotos.size) return false
         if (upload != null && !UploadReceiptPolicy.valid(upload, this, previous = null)) return false
         return true
     }
