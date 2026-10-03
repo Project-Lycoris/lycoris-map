@@ -376,10 +376,11 @@
 .zoom-tools {
     bottom: 30px;
 }
+.map-shell .leaflet-container {
+    font-family: var(--ui-font-body);
+}
 .map-shell .leaflet-control-attribution {
-    font:
-        11px/1.4 Arial,
-        sans-serif;
+    font: 11px/1.4 var(--ui-font-body);
 }
 .language-options {
     position: absolute;

@@ -1,10 +1,15 @@
 # Android typography and icon assets
 
+Roboto and its family variants are strictly prohibited in this project, including
+font dependencies, primary fonts and fallback configuration. Material 3 remains
+the component and type-scale system; it does not require a particular font family.
+
 The app owns its fonts and text scale in `core/designsystem/LycorisTypography.kt`.
 Interface text uses the packaged Noto Sans SC variable font for Chinese and Latin.
 Weights 400, 500, 600 and 700 resolve from the same local TTF, without a font provider,
-Google Play services or a font download. This covers the app theme, the search
-`BasicTextField`, and native map cluster counts. Emoji and characters outside this
+Google Play services or a font download. The platform theme uses the same font at
+400, with a static Regular instance on Android 26/27 (see below). This covers
+Compose, the search `BasicTextField`, and native map cluster counts. Emoji and characters outside this
 font's repertoire still use Android's fallback fonts. Map-provider labels and
 system UI (keyboard, permission dialogs, share sheet) remain provider/system-owned.
 
@@ -59,6 +64,52 @@ pixels, reduced only when a long count would exceed the circle. They use a cache
 The full upstream regional font is included rather than a subset of current UI
 strings, so user-generated place names are not limited to the current interface
 vocabulary. This is not a guarantee of coverage for every Unicode character.
+
+### Android 26/27 platform Regular fallback
+
+The source variable font's default axis and OS/2 weight are **100**, not 400.
+The framework font-family XML parser only reads `android:fontVariationSettings`
+from API 28. A `fontWeight="400"` declaration alone does not instantiate its
+outlines at 400 on older platforms. AndroidX supports variation settings on API
+26, but native framework views and `android.app.TimePickerDialog` do not reliably
+use `ResourcesCompat`; the activity is a `ComponentActivity`, not AppCompat.
+
+`res/font/lycoris_regular.xml` therefore selects the static
+`lycoris_sans_sc_regular.ttf` for API 26/27. `res/font-v28/lycoris_regular.xml`
+selects the original variable font with an explicit 400 axis on API 28+.
+Compose still sets each weight axis explicitly on the original variable font.
+
+The fallback is a full-glyph fixed 400 instance generated with **fontTools
+4.66.1**, with family name **Lycoris Sans SC** and style **Regular**. The OFL,
+copyright metadata, 31,036 glyphs and 30,890 Unicode mappings are preserved.
+It is not a subset of interface text. Its modification notice is packaged as
+`assets/licenses/LycorisSansSC-Regular-NOTICE.txt`; the original OFL remains
+alongside it. The fallback is 10,595,904 bytes before compression; SHA-256:
+`5dc9d2f258edadd45bbbbad2f74d131c113ae95cebef0547b5557bee05209882`.
+To regenerate from the pinned source, use an isolated Python
+environment with `fonttools==4.66.1`, from `apps/android`:
+
+```python
+from fontTools.ttLib import TTFont
+from fontTools.varLib.instancer import instantiateVariableFont
+
+font = TTFont("app/src/main/res/font/noto_sans_sc.ttf", recalcTimestamp=False)
+font = instantiateVariableFont(font, {"wght": 400}, inplace=True, updateFontNames=True)
+names = {
+    1: "Lycoris Sans SC", 2: "Regular",
+    3: "2.004;Lycoris;LycorisSansSC-Regular;wght400",
+    4: "Lycoris Sans SC Regular", 6: "LycorisSansSC-Regular",
+    16: "Lycoris Sans SC", 17: "Regular",
+}
+for name_id, value in names.items():
+    records = [n for n in font["name"].names if n.nameID == name_id]
+    for n in records:
+        font["name"].setName(value, name_id, n.platformID, n.platEncID, n.langID)
+    if not records:
+        font["name"].setName(value, name_id, 3, 1, 0x409)
+font["name"].removeNames(nameID=25)
+font.save("app/src/main/res/font/lycoris_sans_sc_regular.ttf")
+```
 
 ## Icons
 

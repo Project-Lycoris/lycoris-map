@@ -1,0 +1,22 @@
+Lycoris Sans SC Regular is a modified, fixed-weight instance of Noto Sans SC.
+
+Original copyright: (c) 2014-2021 Adobe (http://www.adobe.com/), with Reserved
+Font Name 'Source'.
+
+This derivative is distributed under the SIL Open Font License, Version 1.1.
+The complete copyright and license text is included alongside this notice as
+NotoSansSC-OFL.txt and is also retained in the font's metadata.
+
+Modification by the Lycoris project, 2026-10-04:
+- Instantiate the complete upstream variable font at wght=400 with fontTools
+  4.66.1. Preserve all glyphs and character mappings; no subsetting.
+- Rename the derivative family to Lycoris Sans SC, style Regular, PostScript
+  name LycorisSansSC-Regular. Remove the variable-only PostScript name prefix.
+- Provide a static Regular font for Android 26 and 27 platform-theme loading.
+
+Original upstream revision:
+https://github.com/google/fonts/tree/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosanssc
+Original filename: NotoSansSC[wght].ttf
+Original SHA-256: a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da
+
+This modification does not imply endorsement by the original authors.
