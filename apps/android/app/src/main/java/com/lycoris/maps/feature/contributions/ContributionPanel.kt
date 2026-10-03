@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
@@ -12,6 +13,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -62,14 +66,7 @@ fun ContributionPanel(
             OutlinedTextField(fields.title, { change(fields.copy(title = it)) }, Modifier.fillMaxWidth(), enabled = draft.editable,
                 label = { Text(if (zh) "点位名称" else "Place name") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next))
             PlaceCategory.entries.forEach { category ->
-                val selected = category.wireValue in fields.selectedCategories
-                Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    Checkbox(selected, { checked -> change(fields.withCategories(if (checked) fields.selectedCategories + category.wireValue else fields.selectedCategories.filter { it != category.wireValue })) }, enabled = draft.editable)
-                    Text(categoryName(category.wireValue, zh), Modifier.weight(1f))
-                    if (selected && category.wireValue != fields.selectedCategories.first()) TextButton({ change(fields.withCategories(listOf(category.wireValue) + fields.selectedCategories.filter { it != category.wireValue })) }, enabled = draft.editable) {
-                        Text(if (zh) "设为首选" else "Make primary")
-                    }
-                }
+                ContributionCategoryRow(category, fields, zh, draft.editable, ::change)
             }
             if (PlaceCategory.ACCESSIBLE_TOILET.wireValue in fields.selectedCategories) {
                 Text(if (zh) "场所类型" else "Venue type", style = MaterialTheme.typography.labelLarge)
@@ -129,6 +126,45 @@ fun ContributionPanel(
             text = { Text(if (zh) "移除这份本机草稿？已经提交的内容不受影响。" else "Remove this local draft? Submitted content will remain unchanged.") },
             confirmButton = { TextButton({ confirmDiscard = false; command { coordinator.discard(draft.id) } }) { Text(if (zh) "移除" else "Remove") } },
             dismissButton = { TextButton({ confirmDiscard = false }) { Text(if (zh) "取消" else "Cancel") } })
+    }
+}
+
+@Composable
+internal fun ContributionCategoryRow(
+    category: PlaceCategory,
+    fields: ContributionFields,
+    chinese: Boolean,
+    enabled: Boolean,
+    onChange: (ContributionFields) -> Unit,
+) {
+    val selected = category.wireValue in fields.selectedCategories
+    val label = categoryName(category.wireValue, chinese)
+    Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        // The label and checkbox are one named control; the trailing reorder action stays separate.
+        Row(
+            Modifier.weight(1f).heightIn(min = 48.dp).toggleable(
+                value = selected,
+                enabled = enabled,
+                role = Role.Checkbox,
+                onValueChange = { checked ->
+                    onChange(fields.withCategories(if (checked) fields.selectedCategories + category.wireValue
+                        else fields.selectedCategories.filter { it != category.wireValue }))
+                },
+            ),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            Checkbox(selected, onCheckedChange = null, modifier = Modifier.size(48.dp), enabled = enabled)
+            Text(label, Modifier.weight(1f))
+        }
+        if (selected && category.wireValue != fields.selectedCategories.first()) {
+            TextButton(
+                onClick = { onChange(fields.withCategories(listOf(category.wireValue) + fields.selectedCategories.filter { it != category.wireValue })) },
+                modifier = Modifier.semantics { contentDescription = if (chinese) "将${label}设为首选" else "Make $label primary" },
+                enabled = enabled,
+            ) {
+                Text(if (chinese) "设为首选" else "Make primary")
+            }
+        }
     }
 }
 
