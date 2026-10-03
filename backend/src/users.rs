@@ -13,6 +13,10 @@
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+/// PostgreSQL `char_length` limit shared by accounts and attribution snapshots.
+/// Migration 0012 widens legacy attribution columns to match existing accounts.
+pub const USERNAME_MAX: usize = 255;
+
 /// 注册唯一性检查共用的事务级 advisory lock key。
 ///
 /// 任何 Rust 注册入口都必须先取得该锁；它是唯一约束缺失期间的临时兜底。

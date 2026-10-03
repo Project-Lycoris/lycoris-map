@@ -1147,3 +1147,55 @@ fn error_code(error: &sqlx::Error) -> Option<String> {
         _ => None,
     }
 }
+
+#[tokio::test]
+async fn attribution_migration_preserves_existing_long_accounts_and_business_rows() {
+    let temp = TempDatabase::create().await;
+    let pool = temp.connect_pool().await;
+    let previous = Migrator::with_migrations(
+        MIGRATOR
+            .iter()
+            .filter(|migration| migration.version < 12)
+            .cloned()
+            .collect(),
+    );
+    previous.run(&pool).await.unwrap();
+    seed_java_rows(&pool).await;
+    let username = "旧".repeat(255);
+    sqlx::query("UPDATE users SET username=$1 WHERE id=1")
+        .bind(&username)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let before = snapshot(&pool).await;
+    migrate::run(&pool).await.unwrap();
+    assert_eq!(
+        snapshot(&pool).await,
+        before,
+        "widening must not rename users or rewrite attribution"
+    );
+    let lengths: Vec<i32> = sqlx::query_scalar(
+        "SELECT character_maximum_length::int FROM information_schema.columns
+         WHERE table_schema='public' AND (
+           (table_name='map_markers' AND column_name IN ('username','last_edited_by')) OR
+           (table_name IN ('marker_edit_proposals','marker_image_proposals')
+              AND column_name IN ('proposer_username','reviewed_by')))",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(lengths, vec![255; 6]);
+    // A user that already existed before migration can now write its complete name.
+    sqlx::query("UPDATE map_markers SET username=$1, last_edited_by=$1 WHERE id=10")
+        .bind(&username)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let stored: String = sqlx::query_scalar("SELECT username FROM map_markers WHERE id=10")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, username);
+    migrate::run(&pool).await.unwrap();
+    pool.close().await;
+}

@@ -150,7 +150,7 @@ pub async fn register(
         return register_rejected();
     }
     // 按真实 schema 约束在应用层返回 400，避免落到 PG 变成 500。
-    if !fits(&username, 255)
+    if !fits(&username, users::USERNAME_MAX)
         || !fits(&email, 255)
         || !fits(&nickname, 255)
         || !password::within_bcrypt_limit(&password)

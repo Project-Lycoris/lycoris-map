@@ -301,13 +301,16 @@ fn multipart_body(boundary: &str, parts: &[Part<'_>]) -> Vec<u8> {
 }
 
 async fn register(env: &TestEnv, username: &str) -> (String, String) {
+    register_with_email(env, username, &format!("{username}@example.com")).await
+}
+
+async fn register_with_email(env: &TestEnv, username: &str, email: &str) -> (String, String) {
     use lycoris_backend::email_verification::Purpose;
-    let email = format!("{username}@example.com");
     let nonce = env
         .state
         .email_codes
         .reserve(
-            &email,
+            email,
             Purpose::Register,
             "register",
             "127.0.0.1".parse().unwrap(),
@@ -317,7 +320,7 @@ async fn register(env: &TestEnv, username: &str) -> (String, String) {
         .unwrap();
     env.state
         .email_codes
-        .finish(&email, Purpose::Register, &nonce, true)
+        .finish(email, Purpose::Register, &nonce, true)
         .await
         .unwrap();
     let response = send(
@@ -2358,4 +2361,153 @@ async fn thumbnail_head_and_conditional_requests_always_recheck_permissions() {
     )
     .await;
     assert_eq!(invalid.status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn full_length_accounts_can_contribute_edit_upload_and_review_without_truncation() {
+    let env = TestEnv::new().await;
+    let reviewer = "审".repeat(255);
+    let (admin_cookie, admin_id) =
+        register_with_email(&env, &reviewer, "long-reviewer@example.com").await;
+    sqlx::query("UPDATE users SET role = 'ADMIN' WHERE public_id = $1")
+        .bind(Uuid::parse_str(&admin_id).unwrap())
+        .execute(&env.pool)
+        .await
+        .unwrap();
+
+    // Cover the former first failing ASCII length and PostgreSQL's Unicode limit.
+    for (index, username) in ["x".repeat(65), "名".repeat(255)].iter().enumerate() {
+        let (cookie, _) =
+            register_with_email(&env, username, &format!("long-{index}@example.com")).await;
+        let created = send(
+            &env.router,
+            Call::json(
+                "/api/markers",
+                serde_json::json!({
+                    "lat": 31.2, "lng": 121.4, "category": "accessible_toilet", "title": "合成点位",
+                    "language": "zh", "clientRequestId": format!("long-username-{index}")
+                }),
+            )
+            .cookie(&cookie),
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::OK, "{}", created.text());
+        let id = created.json()["id"].as_i64().unwrap();
+        assert_eq!(created.json()["username"], username.as_str());
+        let approved = send(
+            &env.router,
+            Call::new(Method::POST, &format!("/api/admin/markers/{id}/approve"))
+                .cookie(&admin_cookie),
+        )
+        .await;
+        assert_eq!(approved.status, StatusCode::OK, "{}", approved.text());
+
+        // Approve and reject separate edit proposals, exercising both reviewer columns.
+        for decision in ["approve", "reject"] {
+            let mut edit = Call::json(
+                &format!("/api/markers/{id}"),
+                serde_json::json!({
+                    "title": format!("合成修改-{decision}"), "language": "zh"
+                }),
+            )
+            .cookie(&cookie);
+            edit.method = Method::PATCH;
+            let edited = send(&env.router, edit).await;
+            assert_eq!(edited.status, StatusCode::OK, "{}", edited.text());
+            let proposal: i64 = sqlx::query_scalar(
+                "SELECT id FROM marker_edit_proposals WHERE marker_id=$1 ORDER BY id DESC LIMIT 1",
+            )
+            .bind(id)
+            .fetch_one(&env.pool)
+            .await
+            .unwrap();
+            let reviewed = send(
+                &env.router,
+                Call::new(
+                    Method::POST,
+                    &format!("/api/admin/markers/edit-proposals/{proposal}/{decision}"),
+                )
+                .cookie(&admin_cookie),
+            )
+            .await;
+            assert_eq!(reviewed.status, StatusCode::OK, "{}", reviewed.text());
+            let names: (String, String) = sqlx::query_as(
+                "SELECT proposer_username, reviewed_by FROM marker_edit_proposals WHERE id=$1",
+            )
+            .bind(proposal)
+            .fetch_one(&env.pool)
+            .await
+            .unwrap();
+            assert_eq!(names, (username.clone(), reviewer.clone()));
+        }
+        let names: (String, String) =
+            sqlx::query_as("SELECT username, last_edited_by FROM map_markers WHERE id=$1")
+                .bind(id)
+                .fetch_one(&env.pool)
+                .await
+                .unwrap();
+        assert_eq!(names, (username.clone(), username.clone()));
+
+        let bytes = rgba_png(2, 2);
+        let body = multipart_body(
+            "long-user",
+            &[file_part("file", "synthetic.png", "image/png", &bytes)],
+        );
+        let direct = send(
+            &env.router,
+            Call::multipart(&format!("/api/markers/{id}/image"), "long-user", body).cookie(&cookie),
+        )
+        .await;
+        assert_eq!(direct.status, StatusCode::OK, "{}", direct.text());
+        let start = send(
+            &env.router,
+            resume_start(id, &cookie, &Uuid::new_v4().to_string(), &bytes),
+        )
+        .await;
+        assert_eq!(start.status, StatusCode::OK, "{}", start.text());
+        let url = format!(
+            "/api/markers/{id}/image-uploads/{}",
+            start.json()["uploadId"].as_str().unwrap()
+        );
+        let chunk = send(&env.router, resume_chunk(&url, &cookie, 0, &bytes)).await;
+        assert_eq!(chunk.status, StatusCode::OK, "{}", chunk.text());
+        let completed = send(&env.router, resume_complete(&url, &cookie)).await;
+        assert_eq!(completed.status, StatusCode::OK, "{}", completed.text());
+        assert_eq!(completed.json()["status"], "COMPLETED");
+        let replayed = send(&env.router, resume_complete(&url, &cookie)).await;
+        assert_eq!(replayed.json(), completed.json());
+
+        let photos: Vec<(i64, String)> = sqlx::query_as("SELECT id, proposer_username FROM marker_image_proposals WHERE marker_id=$1 ORDER BY id")
+            .bind(id).fetch_all(&env.pool).await.unwrap();
+        assert_eq!(
+            photos.len(),
+            2,
+            "completion replay must not insert another proposal"
+        );
+        for ((proposal, name), decision) in photos.iter().zip(["approve", "reject"]) {
+            assert_eq!(name, username);
+            let reviewed = send(
+                &env.router,
+                Call::new(
+                    Method::POST,
+                    &format!("/api/admin/markers/image-proposals/{proposal}/{decision}"),
+                )
+                .cookie(&admin_cookie),
+            )
+            .await;
+            assert_eq!(reviewed.status, StatusCode::OK, "{}", reviewed.text());
+            let stored: String =
+                sqlx::query_scalar("SELECT reviewed_by FROM marker_image_proposals WHERE id=$1")
+                    .bind(proposal)
+                    .fetch_one(&env.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(stored, reviewer);
+        }
+    }
+    // The shared boundary is still enforced before email verification or any insert.
+    let rejected = send(&env.router, Call::json("/api/register", serde_json::json!({
+        "username": "名".repeat(256), "email": "over-limit@example.com", "password": "test-password"
+    }))).await;
+    assert_eq!(rejected.status, StatusCode::BAD_REQUEST);
 }

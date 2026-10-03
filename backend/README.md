@@ -10,6 +10,10 @@ Start dependencies from the repository root:
 docker compose -f backend/compose.test.yml up -d --wait
 ```
 
+The pinned PostGIS image is amd64-only. Compose explicitly selects `linux/amd64`,
+including on Apple Silicon; Redis and the Rust compiler can still run natively.
+Keep the image digest when using an approved registry mirror.
+
 Then, in a shell at the repository root:
 
 ```sh
@@ -43,6 +47,11 @@ Normal startup verifies migration history without changing the schema. Apply pen
 For an older database with application tables but no SQLx history, use `--check-baseline` for a read-only check, then `--adopt-baseline` to register the verified baseline before `--migrate`. Back up existing data first. Adoption does not recreate business tables.
 
 Migrations `0009`–`0011` add ordered facility types, opening-hours notes, published photo albums, and the park venue. Existing `category`/`markImage` remain compatible with older clients. The last migration only reclassifies eight reviewed records when their ID, title, and version still match. Back up the database and uploads, apply these migrations, and deploy the API before clients start sending the new fields.
+
+Migration `0012` widens marker, edit-proposal and photo-proposal attribution names
+to the existing account limit of 255 characters. Apply it before deploying this API;
+existing long usernames and old attribution values are preserved without renaming or
+truncation. Account IDs, permissions and historical migration checksums do not change.
 
 After changing SQL queries, point `DATABASE_URL` at a migrated synthetic database and regenerate metadata with SQLx CLI 0.9.0:
 
