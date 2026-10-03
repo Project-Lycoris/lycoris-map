@@ -26,10 +26,12 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lycoris.maps.core.device.HeadingController
 import com.lycoris.maps.core.device.HeadingState
+import com.lycoris.maps.core.device.collectLocatedHeading
 import com.lycoris.maps.core.device.LocationController
 import com.lycoris.maps.core.device.LocationPermission
 import com.lycoris.maps.core.device.LocationState
@@ -45,6 +47,8 @@ import com.lycoris.maps.core.device.StartupPermissionPolicy
 import com.lycoris.maps.core.map.NativeMapState
 import com.lycoris.maps.core.model.Language
 import com.lycoris.maps.BuildConfig
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 data class DeviceActions(
     val location: LocationState,
@@ -136,7 +140,6 @@ fun rememberDeviceActions(
             if (started) {
                 updateRotation()
                 locationController.start()
-                headingController.start()
             } else {
                 locationController.stop()
                 headingController.stop()
@@ -206,7 +209,22 @@ fun rememberDeviceActions(
             else message(currentLanguage.deviceText("麦克风暂不可用，请检查系统权限与麦克风开关。", "The microphone is unavailable. Check system permissions and the microphone switch."))
         }
     }
-    LaunchedEffect(location.fix) { headingController.updateLocation(location.fix) }
+    LaunchedEffect(lifecycle, locationController, headingController) {
+        withContext(Dispatchers.Main.immediate) {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                // Observe location continuously: granting permission or receiving the first fix
+                // must enable direction without another Activity start. Fix expiry also emits a
+                // new location state, which stops sensors when there is no dot to attach it to.
+                collectLocatedHeading(
+                    locations = locationController.state,
+                    nowNanos = android.os.SystemClock::elapsedRealtimeNanos,
+                    updateLocation = headingController::updateLocation,
+                    startHeading = headingController::start,
+                    stopHeading = headingController::stop,
+                )
+            }
+        }
+    }
     LaunchedEffect(location.fix, map.ready, locateRequested, foreground, allowInitialCenter) {
         val fix = location.fix
         if (foreground && map.ready && fix != null && (locateRequested || (allowInitialCenter && !initialLocationCentered))) {
