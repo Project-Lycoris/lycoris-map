@@ -218,7 +218,7 @@ private enum WriteWaitError: Error { case missingWrite }
     row.tap()
     XCTAssertTrue(app.buttons["place.edit"].waitForExistence(timeout: 8))
     app.buttons["place.edit"].tap()
-    try signInIfNeeded(app)
+    signInIfNeeded(app)
 
     // Make a real edit first, so the Submit state specifically reflects hours
     // validation instead of the unchanged-place guard.
@@ -237,11 +237,26 @@ private enum WriteWaitError: Error { case missingWrite }
     XCTAssertTrue(nextDay.isHittable)
     XCTAssertEqual(nextDay.value as? String, "0")
     let preview = app.staticTexts["contribution.hours-preview"]
-    XCTAssertEqual(preview.label, "09:00–22:00")
+    // Multi-category rows make the Form taller than the older release form.
+    // Native Form materializes the hours preview only when it enters the viewport.
+    func assertPreview(_ expected: String) {
+      for _ in 0..<6 {
+        if preview.exists { break }
+        app.swipeUp()
+      }
+      XCTAssertTrue(preview.waitForExistence(timeout: 5))
+      XCTAssertEqual(preview.label, expected)
+    }
+    assertPreview("09:00–22:00")
     let error = app.staticTexts["contribution.hours-error"]
     // SwiftUI exposes the complete labeled row as the Switch's AX frame.
     // Its midpoint can be blank space; press the native switch track itself.
     func toggleNextDay() {
+      for _ in 0..<6 {
+        if nextDay.isHittable { break }
+        app.swipeDown()
+      }
+      XCTAssertTrue(nextDay.isHittable)
       nextDay.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
     }
 
@@ -258,7 +273,8 @@ private enum WriteWaitError: Error { case missingWrite }
     XCTAssertTrue(error.waitForExistence(timeout: 5))
     XCTAssertEqual(
       error.label,
-      "For next-day closing, choose a time earlier than opening. Matching times mean open 24 hours.")
+      "For next-day closing, choose a time earlier than opening. Matching times mean open 24 hours."
+    )
     XCTAssertFalse(preview.exists)
     attach(app, "metadata-next-day-invalid")
 
@@ -272,7 +288,7 @@ private enum WriteWaitError: Error { case missingWrite }
       predicate: NSPredicate { _, _ in !error.exists && submit.isEnabled }, object: nil)
     let restoredResult = await XCTWaiter.fulfillment(of: [restored], timeout: 5)
     XCTAssertEqual(restoredResult, .completed)
-    XCTAssertEqual(preview.label, "09:00–22:00")
+    assertPreview("09:00–22:00")
 
     // Removing an invalid interval must clear the override as well as the two
     // times; adding hours again must start with a valid same-day selection.
@@ -299,7 +315,7 @@ private enum WriteWaitError: Error { case missingWrite }
     add.tap()
     XCTAssertTrue(nextDay.waitForExistence(timeout: 5))
     XCTAssertEqual(nextDay.value as? String, "0")
-    XCTAssertEqual(preview.label, "09:00–18:00")
+    assertPreview("09:00–18:00")
     XCTAssertFalse(error.exists)
     XCTAssertTrue(submit.isEnabled)
 
@@ -399,6 +415,32 @@ private enum WriteWaitError: Error { case missingWrite }
     XCTAssertTrue(app.textFields["contribution.title"].waitForExistence(timeout: 8))
   }
 
+  func testEditingAnotherPlaceKeepsRequestedPlaceIdentity() async throws {
+    try await resetFixture()
+    let app = launch(language: "en", now: "2026-09-20T03:00:00Z")
+    signInViaContribute(app)
+    app.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.35)).tap()
+    let title = app.textFields["contribution.title"]
+    XCTAssertTrue(title.waitForExistence(timeout: 8))
+    fill(title, "Unsent draft A")
+    title.typeText("\n")
+    app.buttons["contribution.close"].tap()
+    let search = app.textFields["map.search"]
+    XCTAssertTrue(search.waitForExistence(timeout: 8))
+    fill(search, "Metro Accessible Toilet")
+    let row = app.buttons["place.row.21"]
+    XCTAssertTrue(row.waitForExistence(timeout: 8))
+    row.tap()
+    let edit = app.buttons["place.edit"]
+    XCTAssertTrue(edit.waitForExistence(timeout: 8))
+    edit.tap()
+    XCTAssertTrue(title.waitForExistence(timeout: 8))
+    attach(app, "edit-with-existing-draft")
+    XCTAssertEqual(
+      title.value as? String, "Metro Accessible Toilet",
+      "Editing a selected place must not reopen a different unfinished draft")
+  }
+
   // MARK: - Helpers
 
   private func launch(
@@ -424,7 +466,9 @@ private enum WriteWaitError: Error { case missingWrite }
   private func signInViaContribute(_ app: XCUIApplication) {
     let contribute = app.buttons["map.contribute"]
     XCTAssertTrue(contribute.waitForExistence(timeout: 10))
-    XCTAssertTrue(contribute.isHittable)
+    // iOS 27 can report a stale false isHittable value for this glass control.
+    // Verify the real tap and resulting auth/selection UI instead of treating
+    // that snapshot as proof that contribution cannot be opened.
     contribute.tap()
     signInIfNeeded(app)
     XCTAssertTrue(app.staticTexts["contribution.pick-location"].waitForExistence(timeout: 10))

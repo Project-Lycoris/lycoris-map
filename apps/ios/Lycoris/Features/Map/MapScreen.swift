@@ -25,6 +25,7 @@ struct MapScreen: View {
   @State private var contribution = ContributionStore()
   @State private var measuredDetail: (id: String, height: CGFloat)?
   @State private var selectingLocation = false
+  @State private var locationDraftID: UUID?
   @State private var pickedLocation: GeoPoint?
   @State private var locationPickFeedback = 0
   @State private var screenCenter: GeoPoint?
@@ -120,7 +121,8 @@ struct MapScreen: View {
         120,
         layout.viewport.height - sidebarTop
           - max(layout.bottomInset + 12, keyboardHeight + 12))
-      let panelTop = layout.clampedTop(contentDragTop ?? (layout.top(for: detent) + dragTranslation))
+      let panelTop = layout.clampedTop(
+        contentDragTop ?? (layout.top(for: detent) + dragTranslation))
       let panelHeight = layout.height(at: panelTop)
       let panelShape = UnevenRoundedRectangle(
         topLeadingRadius: 26, bottomLeadingRadius: layout.bottomCornerRadius(at: panelTop),
@@ -255,6 +257,7 @@ struct MapScreen: View {
             HStack {
               Button("Cancel") {
                 selectingLocation = false
+                locationDraftID = nil
                 pickedLocation = nil
                 if contribution.draft?.editable == true { modal = .contribution() }
               }
@@ -357,7 +360,8 @@ struct MapScreen: View {
             beginContribution(intent)
           } else if chooseLocationAfterDismiss {
             chooseLocationAfterDismiss = false
-            enterLocationSelection(at: contribution.draft?.point)
+            enterLocationSelection(
+              at: contribution.draft?.point, draftID: contribution.draft?.id)
           }
         }
       ) { item in
@@ -509,6 +513,7 @@ struct MapScreen: View {
         if account.user == nil {
           if sidebarDestination == .bookmarks { sidebarDestination = .search }
           selectingLocation = false
+          locationDraftID = nil
           pickedLocation = nil
           chooseLocationAfterDismiss = false
           if case .contribution = modal { modal = nil }
@@ -517,6 +522,7 @@ struct MapScreen: View {
       .onChange(of: account.user?.publicId) { old, new in
         if old != nil, old != new {
           selectingLocation = false
+          locationDraftID = nil
           pickedLocation = nil
           chooseLocationAfterDismiss = false
           queuedContribution = nil
@@ -804,7 +810,8 @@ struct MapScreen: View {
       if selectedPlace != nil {
         placeDetails(
           bottomInset: layout.bottomInset,
-          reportsContentHeight: dragTranslation == 0 && contentDragTop == nil && detent != .collapsed)
+          reportsContentHeight: dragTranslation == 0 && contentDragTop == nil
+            && detent != .collapsed)
       } else if sidebarDestination == .bookmarks && account.user != nil {
         NavigationStack {
           AccountPlacesView(store: account, created: false, onSelect: selectAccountPlace)
@@ -901,21 +908,23 @@ struct MapScreen: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     .contentShape(Rectangle())
-    .gesture(PanelScrollGesture(
-      layout: layout, restingTop: layout.top(for: detent),
-      isExpanded: detent == .expanded,
-      generation: panelGestureGeneration,
-      onMove: { top in
-        isSearchFocused = false
-        contentDragTop = top
-      },
-      onEnd: { top, velocity in
-        let target = layout.nearest(to: top + velocity * 0.18)
-        withAnimation(reduceMotion ? nil : .spring(response: 0.36, dampingFraction: 0.86)) {
-          contentDragTop = nil
-          movePanel(to: target)
-        }
-      }))
+    .gesture(
+      PanelScrollGesture(
+        layout: layout, restingTop: layout.top(for: detent),
+        isExpanded: detent == .expanded,
+        generation: panelGestureGeneration,
+        onMove: { top in
+          isSearchFocused = false
+          contentDragTop = top
+        },
+        onEnd: { top, velocity in
+          let target = layout.nearest(to: top + velocity * 0.18)
+          withAnimation(reduceMotion ? nil : .spring(response: 0.36, dampingFraction: 0.86)) {
+            contentDragTop = nil
+            movePanel(to: target)
+          }
+        })
+    )
     .onChange(of: detent) { _, _ in cancelPanelDrag() }
     .onDisappear { cancelPanelDrag() }
   }
@@ -1174,22 +1183,23 @@ struct MapScreen: View {
     }
     contribution.synchronize()
     isSearchFocused = false
-    if let draft = contribution.draft, draft.phase != .complete {
-      modal = .contribution()
-      return
-    }
     switch intent {
     case .create:
-      enterLocationSelection()
+      if let draft = contribution.draft, draft.phase != .complete {
+        modal = .contribution()
+      } else {
+        enterLocationSelection()
+      }
     case .edit(let id):
       modal = .contribution(editID: id)
     }
   }
 
-  private func enterLocationSelection(at point: GeoPoint? = nil) {
+  private func enterLocationSelection(at point: GeoPoint? = nil, draftID: UUID? = nil) {
     guard account.user != nil else { return }
     movePanel(to: .collapsed)
     pickedLocation = point
+    locationDraftID = draftID
     if let point { store.focusMap(on: point) }
     selectingLocation = true
   }
@@ -1198,10 +1208,10 @@ struct MapScreen: View {
     guard selectingLocation else { return }
     do {
       // A map tap is the selection; GPS only moves the camera.
-      try contribution.begin(at: point)
-      try contribution.move(to: point)
+      try contribution.selectLocation(point, for: locationDraftID)
       locationPickFeedback += 1
       selectingLocation = false
+      locationDraftID = nil
       pickedLocation = nil
       modal = .contribution()
     } catch {

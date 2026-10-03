@@ -1,0 +1,23 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "Some saved drafts could not be opened. Their files have been kept on this device.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some saved drafts could not be opened. Their files have been kept on this device."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分已保存的草稿无法打开。原文件仍保留在此设备上。"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}
