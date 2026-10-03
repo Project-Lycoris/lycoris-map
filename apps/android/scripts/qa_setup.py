@@ -5,6 +5,7 @@ import argparse
 import http.cookiejar
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import subprocess
@@ -23,6 +24,8 @@ SENTINEL_DESCRIPTION = "Synthetic Android QA only. Never production data."
 DATABASE = "lycoris_android_qa"
 DB_CONTAINER = "lycoris-android-qa-postgres"
 BACKEND_CONTAINER = "lycoris-android-qa-backend"
+# Matches users::REGISTER_ADVISORY_LOCK_KEY so fixture creation cannot race signup.
+REGISTER_LOCK = 0x4C59_434F_5249_5301
 
 
 def private_json(path, value):
@@ -35,9 +38,36 @@ def private_json(path, value):
     temporary.replace(path)
 
 
+def local_docker_host():
+    # --context takes precedence over DOCKER_HOST, but reject any nonlocal
+    # override rather than letting a caller accidentally select a remote engine.
+    override = os.environ.get("DOCKER_HOST", "")
+    if override and not override.startswith("unix:///"):
+        raise RuntimeError("Synthetic setup requires a local Unix-socket Docker engine.")
+    context = os.environ.get("DOCKER_CONTEXT", "")
+    if override and not context:
+        return override
+    result = subprocess.run(["docker", "context", "inspect", *([context] if context else [])],
+                            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if result.returncode:
+        raise RuntimeError("Cannot inspect the local QA Docker context.")
+    try:
+        endpoint = json.loads(result.stdout)[0]["Endpoints"]["docker"]["Host"]
+    except (ValueError, KeyError, IndexError, TypeError):
+        raise RuntimeError("Invalid QA Docker context.") from None
+    if not isinstance(endpoint, str) or not endpoint.startswith("unix:///"):
+        raise RuntimeError("Synthetic setup requires a local Unix-socket Docker context.")
+    return endpoint
+
+
 def docker(*arguments, input_text=None):
-    result = subprocess.run(["docker", *arguments], input=input_text, text=True,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    endpoint = local_docker_host()
+    # Pin the inspected endpoint for the command; changes to the selected context
+    # or inherited overrides must not redirect writes between verification and use.
+    environment = {key: value for key, value in os.environ.items()
+                   if key not in ("DOCKER_HOST", "DOCKER_CONTEXT")}
+    result = subprocess.run(["docker", "--host", endpoint, *arguments], input=input_text, text=True,
+                            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if result.returncode:
         # Docker inspect/environment output must never appear in error reports.
         raise RuntimeError(f"Local QA Docker command failed ({arguments[0]}). Check the QA log.")
@@ -45,12 +75,8 @@ def docker(*arguments, input_text=None):
 
 
 def compose(state, *arguments):
-    context = json.loads(docker("context", "inspect"))[0]
-    endpoint = context.get("Endpoints", {}).get("docker", {}).get("Host", "")
-    if not endpoint.startswith("unix://"):
-        raise RuntimeError("Synthetic setup requires a local Unix-socket Docker context.")
-    subprocess.run(["docker", "compose", "--env-file", str(state / "backend.env"),
-                    "-f", str(HERE / "qa.compose.yml"), *arguments], check=True)
+    docker("compose", "--env-file", str(state / "backend.env"),
+           "-f", str(HERE / "qa.compose.yml"), *arguments)
 
 
 def inspect_environment(name):
@@ -61,6 +87,9 @@ def inspect_environment(name):
 def verify_database():
     item, env = inspect_environment(DB_CONTAINER)
     if (env.get("POSTGRES_DB") != DATABASE or env.get("POSTGRES_USER") != DATABASE
+            or item.get("State", {}).get("Running") is not True
+            or item.get("Name") != "/" + DB_CONTAINER
+            or (item["Config"].get("Labels") or {}).get("com.docker.compose.service") != "postgres"
             or (item["Config"].get("Labels") or {}).get("com.docker.compose.project") != "lycoris-android-qa"):
         raise RuntimeError("Refusing non-Android-QA database container.")
     result = docker("exec", DB_CONTAINER, "psql", "-U", DATABASE, "-d", DATABASE,
@@ -78,6 +107,9 @@ def verify_backend():
             and url.username == DATABASE and env.get("SERVER_PORT") == "18186"
             and env.get("SESSION_COOKIE_NAME") == "LYCORIS_ANDROID_QA"
             and binding == [{"HostIp": "127.0.0.1", "HostPort": "18186"}]
+            and item.get("State", {}).get("Running") is True
+            and item.get("Name") == "/" + BACKEND_CONTAINER
+            and (item["Config"].get("Labels") or {}).get("com.docker.compose.service") == "backend"
             and (item["Config"].get("Labels") or {}).get("com.docker.compose.project") == "lycoris-android-qa"):
         raise RuntimeError("Refusing backend that is not the isolated Android QA service.")
 
@@ -136,26 +168,82 @@ def wait_ready():
     raise RuntimeError("Local synthetic backend did not become ready.")
 
 
+def validate_fixture_user(user):
+    if not isinstance(user, dict):
+        raise RuntimeError("Invalid synthetic fixture account.")
+    username = user.get("username", "")
+    match = re.fullmatch(r"android_qa_(fixture|alice|bob)_([0-9a-f]{8})", username) if isinstance(username, str) else None
+    if not match:
+        raise RuntimeError("Invalid synthetic fixture account name.")
+    role, suffix = match.groups()
+    password = user.get("password", "")
+    if (user.get("email") != f"android-qa-{role}-{suffix}@example.invalid"
+            or user.get("nickname") != f"Android QA {role.title()}"
+            or "role" in user or not isinstance(password, str)
+            or not 8 <= len(password) <= 72 or not password.isascii()
+            or any(ord(char) < 32 or ord(char) == 127 for char in password)):
+        raise RuntimeError("Refusing a non-synthetic or invalid fixture account.")
+    return role
+
+
+def seed_user(user):
+    validate_fixture_user(user)
+    verify_backend()
+    # No SMTP bypass in the API: seed only this verified synthetic database.
+    # PostgreSQL's bundled pgcrypto produces a real bcrypt hash. Plaintext stays
+    # on stdin, never in argv/logs, and existing account passwords are not reset.
+    payload = json.dumps({key: user[key] for key in ("username", "nickname", "email", "password")})
+    literal = "'" + payload.replace("'", "''") + "'"
+    block_tag = "$qa_seed_" + secrets.token_hex(16) + "$"
+    while block_tag in payload:
+        block_tag = "$qa_seed_" + secrets.token_hex(16) + "$"
+    statement = """BEGIN;
+SET LOCAL standard_conforming_strings = on;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+SELECT pg_advisory_xact_lock(""" + str(REGISTER_LOCK) + """);
+DO """ + block_tag + """
+DECLARE fixture jsonb := """ + literal + """::jsonb;
+BEGIN
+    IF current_database() <> 'lycoris_android_qa' OR current_user <> 'lycoris_android_qa' THEN
+        RAISE EXCEPTION 'Not the synthetic QA database';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM users WHERE username = fixture->>'username') THEN
+        IF EXISTS (SELECT 1 FROM users WHERE lower(email) = fixture->>'email') THEN
+            RAISE EXCEPTION 'Synthetic fixture email already belongs to another account';
+        END IF;
+        INSERT INTO users(public_id, username, nickname, email, password, role)
+        VALUES (gen_random_uuid(), fixture->>'username', fixture->>'nickname', fixture->>'email',
+                crypt(fixture->>'password', gen_salt('bf', 8)), 'USER');
+    END IF;
+    IF (SELECT count(*) FROM users WHERE username = fixture->>'username') <> 1
+       OR NOT EXISTS (SELECT 1 FROM users WHERE username = fixture->>'username'
+                      AND email = fixture->>'email' AND role = 'USER' AND NOT deleted) THEN
+        RAISE EXCEPTION 'Synthetic fixture account identity mismatch';
+    END IF;
+END """ + block_tag + """;
+COMMIT;
+"""
+    docker("exec", "-i", DB_CONTAINER, "psql", "-X", "-U", DATABASE, "-d", DATABASE,
+           "-v", "ON_ERROR_STOP=1", "-f", "-", input_text=statement)
+
+
 def seed(state):
     verify_backend()
     credentials_path = state / "credentials.json"
     credentials = json.loads(credentials_path.read_text())
     if credentials.get("testEnvironment") != ENVIRONMENT:
         raise RuntimeError("Refusing credentials from a different environment.")
+    users = credentials.get("users", [])
+    roles = [validate_fixture_user(user) for user in users]
+    if sorted(roles) != ["alice", "bob", "fixture"]:
+        raise RuntimeError("Expected exactly the three ordinary synthetic fixture accounts.")
     fixture_client = None
     owner = None
-    for user in credentials["users"]:
+    for user in users:
+        seed_user(user)
         opener = client()
-        # Query only the synthetic database; existing users keep their password.
         username = user["username"]
-        if not username.startswith("android_qa_") or not username.replace("_", "").isalnum():
-            raise RuntimeError("Invalid synthetic fixture account name.")
-        count = docker("exec", DB_CONTAINER, "psql", "-U", DATABASE, "-d", DATABASE, "-Atc",
-                       f"SELECT count(*) FROM users WHERE username='{username}';").strip()
-        if count == "0":
-            data = request(opener, "POST", "/api/register", {key: user[key] for key in ("username", "nickname", "email", "password")})
-        else:
-            data = request(opener, "POST", "/api/login", {key: user[key] for key in ("username", "password")})
+        data = request(opener, "POST", "/api/login", {key: user[key] for key in ("username", "password")})
         public_id = str(uuid.UUID(data["data"]["publicId"]))
         user["publicId"] = public_id
         if username.startswith("android_qa_fixture_"):

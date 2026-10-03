@@ -16,6 +16,15 @@ python3 apps/android/scripts/qa_gateway.py
 
 The last command runs the gateway in the foreground on loopback port 18187. Keep it running during device tests. `start` uses the existing locked Rust Dockerfile with one Cargo build job, applies migrations only to `lycoris_android_qa`, starts dependencies, and creates or reuses three owned synthetic accounts and five fixture markers. It never deletes other users or points, resets existing passwords, restores production data or edits another database.
 
+The setup verifies the local Unix-socket Docker endpoint, fixed Compose project/services,
+loopback backend binding, and database identity before creating fixture accounts directly
+in the synthetic database. It uses PostgreSQL pgcrypto bcrypt hashes, then the normal HTTP
+login endpoint. The three accounts must use the generated `android_qa_` role names and
+`example.invalid` emails, always with role USER. This avoids external mail while leaving
+production registration verification unchanged. Existing users are checked and logged in;
+their passwords and roles are never overwritten. Remote Docker contexts/overrides and
+non-fixture identities are rejected. Passwords are sent to psql on stdin and never printed.
+
 For networks requiring a build proxy, set `ANDROID_QA_BUILD_PROXY` before the first `init`, or update that value in the private `app/build/qa/backend.env`. Container builds need a proxy address reachable from the Docker VM, rather than the host's own `127.0.0.1`. Do not use a production database URL; this setup intentionally provides no URL override.
 
 All generated configuration, random synthetic passwords and fixture IDs are stored in `apps/android/app/build/qa/`, which is ignored as build output. `credentials.json` contains fixture-owner, Alice and Bob accounts for login and account-switch tests. Do not copy these credentials into application code or logs. Keep this directory while reusing its Docker volumes. If only account credentials are lost, `init` creates fresh accounts rather than changing existing passwords. If `backend.env` is lost too, restore that local configuration before reusing the database volume; setup does not reset its password or discard its contents.
@@ -68,11 +77,11 @@ The gateway checks the sentinel's exact title, description, owner, client reques
 
 Four visible points around WGS84 `31.2304, 121.4737` cover accessible toilets, nursing rooms, medical institutions and other locations. The sentinel is at `-70, 0`, outside the UI fixture area. `fixtures.json` records actual IDs. Images, contribution draft state and permissions are exercised by dedicated app tests rather than pre-populated with production content.
 
-Run gateway isolation regression tests without a running backend:
+Run bootstrap, gateway and device-runner isolation regressions without a running backend:
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
-  -s apps/android/scripts -p 'qa_gateway_test.py' -v
+  -s apps/android/scripts -p '*_test.py' -v
 ```
 
 Use `docker compose --env-file apps/android/app/build/qa/backend.env -f apps/android/scripts/qa.compose.yml stop` when the test stack is no longer needed. This preserves its synthetic database and uploads for later sessions.
