@@ -59,6 +59,7 @@ class AppConfigurationTest {
     private var previousQaLocalNetworkRequested: Boolean? = null
     private var previousRequestedOrientation: Int? = null
     private var previousConfigurationOrientation: Int? = null
+    private var rotationStateDiagnostics: RotationStateDiagnostics? = null
 
     @Before fun launchRealQaActivity() {
         assertTrue("Configuration tests require the QA build", BuildConfig.TEST_ENVIRONMENT)
@@ -90,6 +91,7 @@ class AppConfigurationTest {
             try {
                 scenario?.close()
             } finally {
+                rotationStateDiagnostics?.close()
                 permissionPreferences?.edit()?.apply {
                     val original = previousLocationRequested
                     if (original == null) remove("location-requested") else putBoolean("location-requested", original)
@@ -194,6 +196,7 @@ class AppConfigurationTest {
     }
 
     @Test fun actualOrientationRebuildRetainsPrimarySelectionCameraAndSelectedPlaceId() {
+        rotationStateDiagnostics = RotationStateDiagnostics()
         requestConfiguration(Configuration.ORIENTATION_PORTRAIT)
         compose.onNode(tab("Settings", "设置")).performClick()
         // Drag the actual handle, then observe unclipped panel geometry rather than private state.
@@ -332,6 +335,7 @@ class AppConfigurationTest {
         val mainClockBefore = runCatching { compose.mainClock.currentTime }.getOrNull()
         val uptimeBefore = android.os.SystemClock.uptimeMillis()
         val recomposerBefore = recomposerDiagnostics()
+        val observedStateBefore = rotationStateDiagnostics?.summary()
         try {
             compose.waitForIdle()
         } catch (failure: Throwable) {
@@ -343,7 +347,10 @@ class AppConfigurationTest {
                 "Post-rotation waitForIdle failed. ${orientationWindowDiagnostics()} " +
                     "mainClockBefore=$mainClockBefore mainClockAfter=$mainClockAfter " +
                     "uptimeDeltaMs=${uptimeAfter - uptimeBefore} " +
-                    "recomposerBefore=$recomposerBefore recomposerAfter=${recomposerDiagnostics()}",
+                    "recomposerBefore=$recomposerBefore recomposerAfter=${recomposerDiagnostics()} " +
+                    "observedStateBefore=[$observedStateBefore] observedStateAfter=[${rotationStateDiagnostics?.summary()}] " +
+                    "fineLocationGranted=${context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED} " +
+                    "coarseLocationGranted=${context.checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED}",
                 failure,
             )
         }
