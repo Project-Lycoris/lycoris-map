@@ -64,6 +64,8 @@ struct MapScreen: View {
   @State private var showsUnavailableAction = false
   private let bookmarks: [PlacePresentation]
   @GestureState private var dragTranslation: CGFloat = 0
+  @State private var contentDragTop: CGFloat?
+  @State private var panelGestureGeneration = 0
   @State private var query = ""
   @State private var keyboardHeight: CGFloat = 0
   @FocusState private var isSearchFocused: Bool
@@ -118,7 +120,7 @@ struct MapScreen: View {
         120,
         layout.viewport.height - sidebarTop
           - max(layout.bottomInset + 12, keyboardHeight + 12))
-      let panelTop = layout.clampedTop(layout.top(for: detent) + dragTranslation)
+      let panelTop = layout.clampedTop(contentDragTop ?? (layout.top(for: detent) + dragTranslation))
       let panelHeight = layout.height(at: panelTop)
       let panelShape = UnevenRoundedRectangle(
         topLeadingRadius: 26, bottomLeadingRadius: layout.bottomCornerRadius(at: panelTop),
@@ -284,8 +286,12 @@ struct MapScreen: View {
       }
       .frame(width: layout.viewport.width, height: layout.viewport.height)
       .offset(y: -geometry.safeAreaInsets.top)
-      .onChange(of: geometry.size.width) { _, _ in measuredDetail = nil }
+      .onChange(of: geometry.size) { _, _ in
+        measuredDetail = nil
+        cancelPanelDrag()
+      }
       .onChange(of: adaptive.usesSidebar) { _, wide in
+        cancelPanelDrag()
         guard !wide else { return }
         if !sidebarContentVisible {
           sidebarDestination = .search
@@ -469,6 +475,7 @@ struct MapScreen: View {
         await runMetadataClock()
       }
       .onChange(of: scenePhase) { _, phase in
+        if phase != .active { cancelPanelDrag() }
         if phase == .background
           || (phase == .inactive && (voice.state == .recording || voice.state == .finishing))
         {
@@ -797,7 +804,7 @@ struct MapScreen: View {
       if selectedPlace != nil {
         placeDetails(
           bottomInset: layout.bottomInset,
-          reportsContentHeight: dragTranslation == 0 && detent != .collapsed)
+          reportsContentHeight: dragTranslation == 0 && contentDragTop == nil && detent != .collapsed)
       } else if sidebarDestination == .bookmarks && account.user != nil {
         NavigationStack {
           AccountPlacesView(store: account, created: false, onSelect: selectAccountPlace)
@@ -836,10 +843,6 @@ struct MapScreen: View {
         .padding(.horizontal, 14)
         .padding(.bottom, detent == .collapsed ? 14 : detent == .nearby ? 7 : 11)
         .contentShape(Rectangle())
-        // The floating search row is the collapsed panel's drag surface. Once
-        // open, leave text editing and content scrolling to their native controls.
-        .highPriorityGesture(
-          panelDrag(layout: layout), including: detent == .collapsed ? .all : .subviews)
 
         if showsVoiceSearch {
           VoiceSearchControls(
@@ -870,7 +873,7 @@ struct MapScreen: View {
                 isSearchFocused = false
                 modal = .settings($0)
               },
-              cardHeight: cardHeight, showsSettings: detent == .expanded,
+              cardHeight: cardHeight, showsSettings: detent == .expanded || contentDragTop != nil,
               bottomInset: keyboardHeight > 0 ? 12 : max(layout.bottomInset, 12),
               viewportState: store.viewportState, onRetry: store.retryResults,
               bookmarks: store.isPreview ? bookmarks : account.bookmarks.map(store.presentation),
@@ -897,6 +900,24 @@ struct MapScreen: View {
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    .contentShape(Rectangle())
+    .gesture(PanelScrollGesture(
+      layout: layout, restingTop: layout.top(for: detent),
+      isExpanded: detent == .expanded,
+      generation: panelGestureGeneration,
+      onMove: { top in
+        isSearchFocused = false
+        contentDragTop = top
+      },
+      onEnd: { top, velocity in
+        let target = layout.nearest(to: top + velocity * 0.18)
+        withAnimation(reduceMotion ? nil : .spring(response: 0.36, dampingFraction: 0.86)) {
+          contentDragTop = nil
+          movePanel(to: target)
+        }
+      }))
+    .onChange(of: detent) { _, _ in cancelPanelDrag() }
+    .onDisappear { cancelPanelDrag() }
   }
 
   /// In-panel transparent placeholder that reserves the original 44→14pt layout
@@ -904,7 +925,7 @@ struct MapScreen: View {
   /// is a sibling and draws the visible capsule.
   private func grabberPlaceholder(layout: PanelLayout) -> some View {
     let progress = layout.collapsedProgress(
-      at: layout.clampedTop(layout.top(for: detent) + dragTranslation))
+      at: layout.clampedTop(contentDragTop ?? (layout.top(for: detent) + dragTranslation)))
     return Color.clear
       .frame(maxWidth: .infinity)
       .frame(height: 44 - 30 * progress)
@@ -1064,6 +1085,7 @@ struct MapScreen: View {
   }
 
   private func movePanel(to newDetent: MapPanelDetent) {
+    cancelPanelDrag()
     if newDetent != .expanded {
       cancelVoiceSearch()
       isSearchFocused = false
@@ -1076,6 +1098,11 @@ struct MapScreen: View {
       }
       detent = newDetent
     }
+  }
+
+  private func cancelPanelDrag() {
+    contentDragTop = nil
+    panelGestureGeneration &+= 1
   }
 
   private func selectAccountPlace(_ marker: Marker) {

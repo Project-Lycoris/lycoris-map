@@ -11,6 +11,9 @@ struct ContributionFields: Codable, Equatable {
   var description = ""
   var openTimeStart = ""
   var openTimeEnd = ""
+  /// UI-only intent. Older drafts and existing places infer the closing day
+  /// from the two times; the API continues to receive only HH:mm values.
+  var closingDayOverride: Bool? = nil
   var language = "zh"
   /// The selected venue for an accessible toilet. `nil` means "not specified".
   /// Optional so pre-upgrade drafts without the key still decode.
@@ -38,7 +41,19 @@ struct ContributionFields: Codable, Equatable {
       && !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       && title.unicodeScalars.count <= 120
       && ((openTimeStart.isEmpty && openTimeEnd.isEmpty)
-        || (Self.validTime(openTimeStart) && Self.validTime(openTimeEnd)))
+        || (Self.validTime(openTimeStart) && Self.validTime(openTimeEnd)
+          && openingHoursMatchClosingDay))
+  }
+
+  var closesNextDay: Bool {
+    closingDayOverride ?? (Self.validTime(openTimeStart) && Self.validTime(openTimeEnd)
+      && openTimeEnd < openTimeStart)
+  }
+
+  var openingHoursMatchClosingDay: Bool {
+    guard Self.validTime(openTimeStart), Self.validTime(openTimeEnd) else { return false }
+    // Equal times retain the shared 24-hour contract, with either UI choice.
+    return openTimeStart == openTimeEnd || closesNextDay == (openTimeEnd < openTimeStart)
   }
 
   static func validTime(_ value: String) -> Bool {
@@ -72,6 +87,7 @@ struct ContributionFields: Codable, Equatable {
   private enum CodingKeys: String, CodingKey {
     case title, category, description, openTimeStart, openTimeEnd, language
     case venueType, unknownVenueType, categories, openingHoursNote
+    case closingDayOverride
   }
 
   init(from decoder: any Decoder) throws {
@@ -82,6 +98,7 @@ struct ContributionFields: Codable, Equatable {
     description = try container.decodeIfPresent(String.self, forKey: .description) ?? ""
     openTimeStart = try container.decodeIfPresent(String.self, forKey: .openTimeStart) ?? ""
     openTimeEnd = try container.decodeIfPresent(String.self, forKey: .openTimeEnd) ?? ""
+    closingDayOverride = try container.decodeIfPresent(Bool.self, forKey: .closingDayOverride)
     language = try container.decodeIfPresent(String.self, forKey: .language) ?? "en"
     venueType = try? container.decodeIfPresent(PlaceVenue.self, forKey: .venueType)
     unknownVenueType = try container.decodeIfPresent(String.self, forKey: .unknownVenueType)
@@ -138,7 +155,12 @@ struct ContributionDraft: Codable, Equatable, Identifiable {
   }
 
   var editable: Bool { phase == .draft }
-  var hasChanges: Bool { original.map { fields != ContributionFields(marker: $0) } ?? true }
+  var hasChanges: Bool {
+    guard let original else { return true }
+    var submittedFields = fields
+    submittedFields.closingDayOverride = nil
+    return submittedFields != ContributionFields(marker: original)
+  }
   var canSubmit: Bool { fields.valid && (hasChanges || photoID != nil) }
 
   var validCheckpoint: Bool {

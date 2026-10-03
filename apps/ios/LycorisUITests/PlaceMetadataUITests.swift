@@ -206,6 +206,118 @@ private enum WriteWaitError: Error { case missingWrite }
     XCTAssertEqual(write["title"] as? String, "Metro Accessible Toilet")
   }
 
+  func testNextDayToggleValidatesHoursAndRemovalClearsItsState() async throws {
+    try await resetFixture()
+    let app = launch(now: "2026-09-20T03:00:00Z")
+    let search = app.textFields["map.search"]
+    XCTAssertTrue(search.waitForExistence(timeout: 8))
+    search.tap()
+    search.typeText("Metro Accessible Toilet")
+    let row = app.buttons["place.row.21"]
+    XCTAssertTrue(row.waitForExistence(timeout: 8))
+    row.tap()
+    XCTAssertTrue(app.buttons["place.edit"].waitForExistence(timeout: 8))
+    app.buttons["place.edit"].tap()
+    try signInIfNeeded(app)
+
+    // Make a real edit first, so the Submit state specifically reflects hours
+    // validation instead of the unchanged-place guard.
+    let venue = app.buttons["contribution.venue"]
+    XCTAssertTrue(venue.waitForExistence(timeout: 10))
+    venue.tap()
+    app.buttons["Mall"].tap()
+    let submit = app.buttons["contribution.submit"]
+    XCTAssertTrue(submit.isEnabled)
+
+    let nextDay = app.switches["contribution.next-day"]
+    for _ in 0..<6 {
+      if nextDay.isHittable { break }
+      app.swipeUp()
+    }
+    XCTAssertTrue(nextDay.isHittable)
+    XCTAssertEqual(nextDay.value as? String, "0")
+    let preview = app.staticTexts["contribution.hours-preview"]
+    XCTAssertEqual(preview.label, "09:00–22:00")
+    let error = app.staticTexts["contribution.hours-error"]
+    // SwiftUI exposes the complete labeled row as the Switch's AX frame.
+    // Its midpoint can be blank space; press the native switch track itself.
+    func toggleNextDay() {
+      nextDay.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+    }
+
+    // 09:00 to next-day 22:00 exceeds the supported daily window.
+    toggleNextDay()
+    XCTAssertEqual(nextDay.value as? String, "1")
+    XCTAssertFalse(submit.isEnabled)
+    // Form creates its section footer lazily. At accessibility text sizes it
+    // may be below the visible switch, so reveal it without tapping again.
+    for _ in 0..<6 {
+      if error.exists { break }
+      app.swipeUp()
+    }
+    XCTAssertTrue(error.waitForExistence(timeout: 5))
+    XCTAssertEqual(
+      error.label,
+      "For next-day closing, choose a time earlier than opening. Matching times mean open 24 hours.")
+    XCTAssertFalse(preview.exists)
+    attach(app, "metadata-next-day-invalid")
+
+    for _ in 0..<6 {
+      if nextDay.isHittable { break }
+      app.swipeDown()
+    }
+    XCTAssertTrue(nextDay.isHittable)
+    toggleNextDay()
+    let restored = XCTNSPredicateExpectation(
+      predicate: NSPredicate { _, _ in !error.exists && submit.isEnabled }, object: nil)
+    let restoredResult = await XCTWaiter.fulfillment(of: [restored], timeout: 5)
+    XCTAssertEqual(restoredResult, .completed)
+    XCTAssertEqual(preview.label, "09:00–22:00")
+
+    // Removing an invalid interval must clear the override as well as the two
+    // times; adding hours again must start with a valid same-day selection.
+    toggleNextDay()
+    XCTAssertEqual(nextDay.value as? String, "1")
+    XCTAssertFalse(submit.isEnabled)
+    for _ in 0..<6 {
+      if error.exists { break }
+      app.swipeUp()
+    }
+    XCTAssertTrue(error.waitForExistence(timeout: 5))
+    let remove = app.buttons["Remove opening hours"]
+    for _ in 0..<4 {
+      if remove.isHittable { break }
+      app.swipeDown()
+    }
+    XCTAssertTrue(remove.isHittable)
+    remove.tap()
+    let add = app.buttons["Add opening hours"]
+    XCTAssertTrue(add.waitForExistence(timeout: 5))
+    XCTAssertFalse(nextDay.exists)
+    XCTAssertFalse(error.exists)
+    XCTAssertTrue(submit.isEnabled)
+    add.tap()
+    XCTAssertTrue(nextDay.waitForExistence(timeout: 5))
+    XCTAssertEqual(nextDay.value as? String, "0")
+    XCTAssertEqual(preview.label, "09:00–18:00")
+    XCTAssertFalse(error.exists)
+    XCTAssertTrue(submit.isEnabled)
+
+    remove.tap()
+    XCTAssertTrue(add.waitForExistence(timeout: 5))
+    XCTAssertTrue(submit.isHittable)
+    XCTAssertTrue(submit.isEnabled)
+    attach(app, "metadata-next-day-hours-removed")
+    submit.tap()
+    XCTAssertTrue(app.staticTexts["contribution.complete"].waitForExistence(timeout: 20))
+    let write = try await waitForWrite(method: "PATCH", id: 21)
+    XCTAssertEqual(write["openTimeStart"] as? String, "")
+    XCTAssertEqual(write["openTimeEnd"] as? String, "")
+    XCTAssertEqual(write["venueType"] as? String, "mall")
+    XCTAssertNil(write["closingDayOverride"])
+    XCTAssertNil(write["closesNextDay"])
+  }
+
   func testNewToiletOffersAllNineVenues() async throws {
     try await resetFixture()
     let app = launch(now: "2026-09-20T03:00:00Z")

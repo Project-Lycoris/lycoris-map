@@ -1,0 +1,74 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "%@–%@ (next day)": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@–%@ (next day)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@–次日 %@"
+          }
+        }
+      }
+    },
+    "Closes the next day": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Closes the next day"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次日结束营业"
+          }
+        }
+      }
+    },
+    "Closing is earlier than opening. Turn on next-day closing, or choose a later time.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Closing is earlier than opening. Turn on next-day closing, or choose a later time."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "结束时间早于开始时间。请开启次日结束营业，或选择更晚的时间。"
+          }
+        }
+      }
+    },
+    "For next-day closing, choose a time earlier than opening. Matching times mean open 24 hours.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "For next-day closing, choose a time earlier than opening. Matching times mean open 24 hours."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次日结束营业时，结束时间应早于开始时间；两者相同表示全天开放。"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

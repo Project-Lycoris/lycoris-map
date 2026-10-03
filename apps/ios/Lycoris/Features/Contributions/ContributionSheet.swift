@@ -279,17 +279,30 @@ struct ContributionSheet: View {
             var fields = draft.fields
             fields.openTimeStart = "09:00"
             fields.openTimeEnd = "18:00"
+            fields.closingDayOverride = nil
             store.update(fields)
           }
         } else {
           DatePicker(
             "Opening Time", selection: time(\.openTimeStart), displayedComponents: .hourAndMinute)
+            .accessibilityIdentifier("contribution.opening-time")
           DatePicker(
             "Closing Time", selection: time(\.openTimeEnd), displayedComponents: .hourAndMinute)
+            .accessibilityIdentifier("contribution.closing-time")
+          Toggle(isOn: closingDay()) {
+            Text("Closes the next day", tableName: "OpeningHours")
+          }
+          .accessibilityIdentifier("contribution.next-day")
+          if draft.fields.openingHoursMatchClosingDay {
+            Text(PlacePresentation.hours(start: draft.fields.openTimeStart, end: draft.fields.openTimeEnd))
+              .foregroundStyle(.secondary)
+              .accessibilityIdentifier("contribution.hours-preview")
+          }
           Button("Remove opening hours", role: .destructive) {
             var fields = draft.fields
             fields.openTimeStart = ""
             fields.openTimeEnd = ""
+            fields.closingDayOverride = nil
             store.update(fields)
           }
         }
@@ -306,7 +319,15 @@ struct ContributionSheet: View {
         .lineLimit(2...5).accessibilityIdentifier("contribution.hours-note")
       } footer: {
         if !draft.fields.openTimeStart.isEmpty {
-          Text("Matching opening and closing times mean open 24 hours.")
+          if !draft.fields.openingHoursMatchClosingDay {
+            Text(draft.fields.closesNextDay
+              ? "For next-day closing, choose a time earlier than opening. Matching times mean open 24 hours."
+              : "Closing is earlier than opening. Turn on next-day closing, or choose a later time.",
+              tableName: "OpeningHours")
+              .accessibilityIdentifier("contribution.hours-error")
+          } else {
+            Text("Matching opening and closing times mean open 24 hours.")
+          }
         }
       }
     }.disabled(!draft.editable || store.isWorking || photoLoading)
@@ -376,6 +397,16 @@ struct ContributionSheet: View {
         let components = Calendar.current.dateComponents([.hour, .minute], from: date)
         fields[keyPath: key] = String(
           format: "%02d:%02d", components.hour ?? 0, components.minute ?? 0)
+        store.update(fields)
+      })
+  }
+
+  private func closingDay() -> Binding<Bool> {
+    Binding(
+      get: { store.draft?.fields.closesNextDay ?? false },
+      set: { nextDay in
+        guard var fields = store.draft?.fields else { return }
+        fields.closingDayOverride = nextDay
         store.update(fields)
       })
   }

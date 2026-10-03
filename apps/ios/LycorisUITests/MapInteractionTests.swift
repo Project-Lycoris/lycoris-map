@@ -2,6 +2,107 @@ import XCTest
 
 @MainActor
 final class MapInteractionTests: LocalBackendTestCase {
+  func testOverlappingNearbyDetentStillExpandsFromContent() {
+    let app = XCUIApplication()
+    app.launchArguments = ["-AppleLanguages", "(en)", "-lycoris-preview", "collapsed",
+      "-lycoris.language", "en",
+      "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+    app.launch()
+    let handle = app.buttons["map.panel.handle"]
+    XCTAssertTrue(handle.waitForExistence(timeout: 10))
+    handle.tap()
+    let nearby = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value == %@", "Nearby"), object: handle)
+    XCTAssertEqual(XCTWaiter.wait(for: [nearby], timeout: 4), .completed)
+    XCTAssertLessThan(handle.frame.minY, 100, "Nearby must coincide with the expanded top in this fixture")
+    let category = app.buttons["map.category.accessible_toilet"]
+    XCTAssertTrue(category.waitForExistence(timeout: 3))
+    category.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+      .press(forDuration: 0.1,
+        thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)))
+    let expanded = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value == %@", "Expanded"), object: handle)
+    XCTAssertEqual(XCTWaiter.wait(for: [expanded], timeout: 4), .completed)
+    let range = app.buttons["settings.range"]
+    for _ in 0..<6 {
+      if range.isHittable { break }
+      app.descendants(matching: .any)["map.panel.content"].firstMatch.swipeUp()
+    }
+    XCTAssertTrue(range.isHittable)
+  }
+
+  func testContentRowsResizeThePanelAndStillAcceptTaps() {
+    let app = XCUIApplication()
+    app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US",
+      "-lycoris-preview", "anonymousExpanded", "-lycoris.language", "en"]
+    app.launch()
+    let handle = app.buttons["map.panel.handle"]
+    let category = app.buttons["map.category.accessible_toilet"]
+    XCTAssertTrue(category.waitForExistence(timeout: 10))
+    let originalTop = handle.frame.minY
+    category.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+      .press(forDuration: 0.1,
+        thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.92)))
+    let lowered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      handle.value as? String != "Expanded" && handle.frame.minY > originalTop + 100
+    }, object: handle)
+    XCTAssertEqual(XCTWaiter.wait(for: [lowered], timeout: 4), .completed)
+    XCTAssertFalse(app.keyboards.firstMatch.exists)
+    if handle.value as? String == "Collapsed" { handle.tap() }
+    XCTAssertTrue(category.waitForExistence(timeout: 3))
+    category.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+      .press(forDuration: 0.1,
+        thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.12)))
+    let expanded = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value == %@", "Expanded"), object: handle)
+    XCTAssertEqual(XCTWaiter.wait(for: [expanded], timeout: 4), .completed)
+    XCTAssertFalse(app.alerts.firstMatch.exists)
+    XCTAssertFalse(app.staticTexts["places.results.title"].exists)
+    attach(app, name: "expanded-from-content-row")
+    // A drag that begins over a button must not trigger it, but an ordinary
+    // tap must still open the native settings screen.
+    let range = app.buttons["settings.range"]
+    XCTAssertTrue(range.isHittable)
+    range.tap()
+    XCTAssertTrue(app.navigationBars["Searching Range"].waitForExistence(timeout: 3))
+  }
+
+  func testScrolledDetailsReachTopBeforeThePanelCollapses() {
+    let app = XCUIApplication()
+    app.launchArguments = ["-AppleLanguages", "(en)", "-lycoris-preview", "details",
+      "-lycoris.language", "en",
+      "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+    app.launch()
+    let handle = app.buttons["map.panel.handle"]
+    XCTAssertTrue(handle.waitForExistence(timeout: 10))
+    handle.tap()
+    let scroll = app.scrollViews["place.details"]
+    XCTAssertTrue(scroll.waitForExistence(timeout: 3))
+    for _ in 0..<3 { scroll.swipeUp() }
+    XCTAssertEqual(handle.value as? String, "Expanded")
+    XCTAssertTrue(app.buttons["place.bookmark"].isHittable)
+    let expandedTop = handle.frame.minY
+    let bookmarkTop = app.buttons["place.bookmark"].frame.minY
+    scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.45, dy: 0.45))
+      .press(forDuration: 0.1,
+        thenDragTo: scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.45, dy: 0.58)))
+    XCTAssertEqual(handle.value as? String, "Expanded")
+    XCTAssertEqual(handle.frame.minY, expandedTop, accuracy: 1)
+    XCTAssertGreaterThan(app.buttons["place.bookmark"].frame.minY, bookmarkTop + 20)
+    // Return through the scrollable content. Once its top is reached, the same
+    // content surface must move the panel; no grabber/search-row interaction.
+    for _ in 0..<8 {
+      if handle.value as? String != "Expanded" { break }
+      scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.45, dy: 0.25))
+        .press(forDuration: 0.1,
+          thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.45, dy: 0.93)))
+    }
+    let lowered = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value != %@", "Expanded"), object: handle)
+    XCTAssertEqual(XCTWaiter.wait(for: [lowered], timeout: 4), .completed)
+    attach(app, name: "detail-scroll-to-panel-handoff")
+  }
+
   func testCollapsedSearchRowAndPaddingDragWithoutStealingTaps() {
     let app = XCUIApplication()
     app.launchArguments = [
@@ -12,6 +113,7 @@ final class MapInteractionTests: LocalBackendTestCase {
     let handle = app.buttons["map.panel.handle"]
     let search = app.textFields["map.search"]
     XCTAssertTrue(handle.waitForExistence(timeout: 10))
+    let collapsedTop = handle.frame.minY
     attach(app, name: "liquid-glass-collapsed")
     for fromPadding in [false, true] {
       XCTAssertEqual(handle.value as? String, "Collapsed")
@@ -28,6 +130,12 @@ final class MapInteractionTests: LocalBackendTestCase {
       XCTAssertFalse(app.keyboards.firstMatch.exists)
       attach(app, name: fromPadding ? "panel-drag-from-padding" : "panel-drag-from-search")
       handle.tap()
+      // A detent value changes before its spring finishes. Wait for the actual
+      // collapsed position before tapping the moving account/search controls.
+      let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+        handle.value as? String == "Collapsed" && abs(handle.frame.minY - collapsedTop) < 1
+      }, object: handle)
+      XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 4), .completed)
     }
     app.buttons["map.account"].tap()
     XCTAssertTrue(app.alerts["Not available yet"].waitForExistence(timeout: 3))

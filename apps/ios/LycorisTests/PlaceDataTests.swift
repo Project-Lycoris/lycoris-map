@@ -52,7 +52,11 @@ struct PlaceDataTests {
     #expect(
       PlacePresentation.hours(start: "00:00", end: "00:00") == String(appLocalized: "Open 24 hours")
     )
-    #expect(PlacePresentation.hours(start: "21:00", end: "06:00") == "21:00–06:00")
+    #expect(
+      PlacePresentation.hours(start: "21:00", end: "06:00")
+        == String(
+          format: String(appLocalized: "%@–%@ (next day)", table: "OpeningHours"),
+          "21:00", "06:00"))
     let base = URL(string: "https://api.example.test")!
     #expect(
       PlacePresentation.imageURL("/uploads/markers/abc-1.png", baseURL: base)?.host == base.host)
