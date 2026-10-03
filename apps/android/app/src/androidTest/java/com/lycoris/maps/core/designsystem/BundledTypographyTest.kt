@@ -5,6 +5,8 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.view.ContextThemeWrapper
+import android.widget.TextView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.createFontFamilyResolver
 import androidx.test.platform.app.InstrumentationRegistry
@@ -14,6 +16,7 @@ import coil3.request.SuccessResult
 import coil3.request.allowHardware
 import coil3.svg.SvgDecoder
 import coil3.toBitmap
+import com.lycoris.maps.R
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
@@ -43,15 +46,42 @@ class BundledTypographyTest {
         assertSame(medium, LycorisNativeFonts.medium(context))
         assertNotEquals(Typeface.DEFAULT, medium)
         assertEquals(inkByWeight.getValue(500), renderedInk(medium))
+        val composeMedium = resolver.resolve(LycorisFontFamily, fontWeight = FontWeight.Medium).value as Typeface
+        for (size in listOf(14f, 18.2f, 28f)) {
+            assertEquals("Native cluster font must retain medium strokes at $size px",
+                renderedInk(composeMedium, size), renderedInk(medium, size))
+        }
     }
 
-    private fun renderedInk(typeface: Typeface): Long {
+    @Test fun frameworkThemeAndStaticFallbackRenderRegularInsteadOfSourceThin() {
+        val regular = createFontFamilyResolver(context)
+            .resolve(LycorisFontFamily, fontWeight = FontWeight.Normal).value as Typeface
+        var platformFont: Typeface? = null
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            platformFont = TextView(ContextThemeWrapper(context, R.style.Theme_Lycoris)).typeface
+        }
+        val expected = renderedInk(regular).toDouble()
+        assertTrue(expected > 0)
+        for (font in listOf(
+            checkNotNull(platformFont),
+            context.resources.getFont(R.font.lycoris_regular),
+            context.resources.getFont(R.font.lycoris_sans_sc_regular),
+        )) {
+            assertNotEquals(Typeface.DEFAULT, font)
+            // Static instancing rounds the variable outlines to integer font coordinates.
+            // Allow their small rasterization difference, but never the source's Thin face.
+            assertEquals("Framework and static fallback must render Regular strokes",
+                expected, renderedInk(font).toDouble(), expected * 0.02)
+        }
+    }
+
+    private fun renderedInk(typeface: Typeface, size: Float = 48f): Long {
         val bitmap = Bitmap.createBitmap(320, 100, Bitmap.Config.ARGB_8888)
         try {
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 this.typeface = typeface
                 color = Color.BLACK
-                textSize = 48f
+                textSize = size
             }
             Canvas(bitmap).drawText("Aa医卫123", 8f, 70f, paint)
             val pixels = IntArray(bitmap.width * bitmap.height)

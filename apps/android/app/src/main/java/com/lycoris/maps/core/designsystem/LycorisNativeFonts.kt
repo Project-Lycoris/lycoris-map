@@ -1,6 +1,7 @@
 package com.lycoris.maps.core.designsystem
 
 import android.content.Context
+import android.graphics.Paint
 import android.graphics.Typeface
 import com.lycoris.maps.R
 
@@ -10,5 +11,10 @@ internal object LycorisNativeFonts {
 
     @Synchronized
     fun medium(context: Context): Typeface = mediumTypeface
-        ?: context.applicationContext.resources.getFont(R.font.lycoris_medium).also { mediumTypeface = it }
+        ?: Paint().apply {
+            typeface = context.applicationContext.resources.getFont(R.font.noto_sans_sc)
+            // Paint applies variation axes from API 26, as Compose's font resolver does.
+            // The framework font-family XML attribute only works from API 28.
+            check(setFontVariationSettings("'wght' 500")) { "Bundled font does not support medium weight" }
+        }.typeface.also { mediumTypeface = it }
 }

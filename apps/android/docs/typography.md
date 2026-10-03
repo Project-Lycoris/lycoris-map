@@ -48,6 +48,9 @@ Additional screen styles reuse it through `LycorisTextStyles`.
 Native cluster numbers keep their existing map-symbol sizing: `14 * density`
 pixels, reduced only when a long count would exceed the circle. They use a cached
 500-weight packaged typeface shared by the MapLibre, Google and Tencent renderers.
+The cache applies `wght=500` with the API 26 `Paint.setFontVariationSettings` API,
+the same route used by Compose's resolver, instead of relying on the API 28-only
+framework XML variation attribute. No additional medium font file is packaged.
 
 ## Font provenance
 
