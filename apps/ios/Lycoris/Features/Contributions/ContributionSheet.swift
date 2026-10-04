@@ -15,10 +15,18 @@ struct ContributionSheet: View {
   @State private var editLoadError: String?
   @FocusState private var focused: Bool
 
+  private var displayedDraft: ContributionDraft? {
+    guard let draft = store.draft, editID == nil || draft.original?.id == editID else { return nil }
+    return draft
+  }
+
   var body: some View {
     NavigationStack {
       Form {
-        if let draft = store.draft {
+        if let warning = store.draftRecoveryMessage {
+          Section { Text(warning).foregroundStyle(.secondary) }
+        }
+        if let draft = displayedDraft {
           if draft.phase == .complete {
             Section {
               Label("Submitted for review", systemImage: "checkmark.circle")
@@ -122,7 +130,7 @@ struct ContributionSheet: View {
           }
           .accessibilityIdentifier("contribution.close")
         }
-        if store.draft?.editable == true {
+        if displayedDraft?.editable == true {
           ToolbarItem(placement: .confirmationAction) {
             Button("Submit", systemImage: "checkmark") {
               focused = false
@@ -279,17 +287,35 @@ struct ContributionSheet: View {
             var fields = draft.fields
             fields.openTimeStart = "09:00"
             fields.openTimeEnd = "18:00"
+            fields.closingDayOverride = nil
             store.update(fields)
           }
         } else {
           DatePicker(
-            "Opening Time", selection: time(\.openTimeStart), displayedComponents: .hourAndMinute)
+            "Opening Time", selection: time(\.openTimeStart), displayedComponents: .hourAndMinute
+          )
+          .accessibilityIdentifier("contribution.opening-time")
           DatePicker(
-            "Closing Time", selection: time(\.openTimeEnd), displayedComponents: .hourAndMinute)
+            "Closing Time", selection: time(\.openTimeEnd), displayedComponents: .hourAndMinute
+          )
+          .accessibilityIdentifier("contribution.closing-time")
+          Toggle(isOn: closingDay()) {
+            Text("Closes the next day", tableName: "OpeningHours")
+          }
+          .accessibilityIdentifier("contribution.next-day")
+          if draft.fields.openingHoursMatchClosingDay {
+            Text(
+              PlacePresentation.hours(
+                start: draft.fields.openTimeStart, end: draft.fields.openTimeEnd)
+            )
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("contribution.hours-preview")
+          }
           Button("Remove opening hours", role: .destructive) {
             var fields = draft.fields
             fields.openTimeStart = ""
             fields.openTimeEnd = ""
+            fields.closingDayOverride = nil
             store.update(fields)
           }
         }
@@ -306,7 +332,17 @@ struct ContributionSheet: View {
         .lineLimit(2...5).accessibilityIdentifier("contribution.hours-note")
       } footer: {
         if !draft.fields.openTimeStart.isEmpty {
-          Text("Matching opening and closing times mean open 24 hours.")
+          if !draft.fields.openingHoursMatchClosingDay {
+            Text(
+              draft.fields.closesNextDay
+                ? "For next-day closing, choose a time earlier than opening. Matching times mean open 24 hours."
+                : "Closing is earlier than opening. Turn on next-day closing, or choose a later time.",
+              tableName: "OpeningHours"
+            )
+            .accessibilityIdentifier("contribution.hours-error")
+          } else {
+            Text("Matching opening and closing times mean open 24 hours.")
+          }
         }
       }
     }.disabled(!draft.editable || store.isWorking || photoLoading)
@@ -376,6 +412,16 @@ struct ContributionSheet: View {
         let components = Calendar.current.dateComponents([.hour, .minute], from: date)
         fields[keyPath: key] = String(
           format: "%02d:%02d", components.hour ?? 0, components.minute ?? 0)
+        store.update(fields)
+      })
+  }
+
+  private func closingDay() -> Binding<Bool> {
+    Binding(
+      get: { store.draft?.fields.closesNextDay ?? false },
+      set: { nextDay in
+        guard var fields = store.draft?.fields else { return }
+        fields.closingDayOverride = nextDay
         store.update(fields)
       })
   }

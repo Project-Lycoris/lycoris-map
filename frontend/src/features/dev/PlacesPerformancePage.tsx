@@ -227,7 +227,7 @@ function PerformanceRun() {
                     color: '#222',
                     padding: 12,
                     border: '1px solid #888',
-                    font: '12px/1.4 monospace',
+                    font: '12px/1.4 var(--ui-font-body)',
                 }}
             >
                 <strong>DEV synthetic performance</strong>

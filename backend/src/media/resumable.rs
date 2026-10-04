@@ -188,7 +188,7 @@ async fn start(
             "Invalid image size or SHA256",
         ));
     }
-    if user.0.user.username_or_empty().chars().count() > 64 {
+    if user.0.user.username_or_empty().chars().count() > crate::users::USERNAME_MAX {
         return Err(UploadError(
             StatusCode::BAD_REQUEST,
             "Username too long for image contributions",

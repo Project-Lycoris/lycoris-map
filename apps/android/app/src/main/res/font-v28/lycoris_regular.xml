@@ -3,6 +3,6 @@
     <font
         android:font="@font/noto_sans_sc"
         android:fontStyle="normal"
-        android:fontWeight="500"
-        android:fontVariationSettings="'wght' 500" />
+        android:fontWeight="400"
+        android:fontVariationSettings="'wght' 400" />
 </font-family>

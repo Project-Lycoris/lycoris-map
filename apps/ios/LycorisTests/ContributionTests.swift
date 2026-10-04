@@ -56,6 +56,220 @@ import Testing
     #expect(store.drafts.map(\.id) == [second])
   }
 
+  @Test func movingActiveDraftPreservesFieldsPhotosAndIdentity() async throws {
+    let api = ContributionFixture()
+    let (_, store, journal) = await setup(api)
+    defer { try? journal.clear() }
+    try fill(store)
+    var fields = try #require(store.draft?.fields)
+    fields.description = "Keep these details"
+    fields.selectCategories([.nursing, .toilet])
+    fields.venueType = .park
+    fields.openingHoursNote = "Summer hours vary"
+    fields.openTimeStart = "10:00"
+    fields.openTimeEnd = "02:00"
+    fields.closingDayOverride = true
+    store.update(fields)
+    try store.addPhoto(Data(repeating: 3, count: 16))
+    try store.addPhoto(Data(repeating: 4, count: 24))
+    let before = try #require(store.draft)
+    let point = GeoPoint(latitude: 32, longitude: 120)!
+    try store.selectLocation(point, for: before.id)
+    let moved = try #require(store.draft)
+    #expect(moved.id == before.id && moved.point == point)
+    #expect(moved.fields == before.fields && moved.remainingPhotos == before.remainingPhotos)
+    #expect(store.drafts.count == 1)
+    #expect(try journal.list(owner: before.owner, origin: before.origin) == [moved])
+    #expect(try journal.photo(moved) == Data(repeating: 3, count: 16))
+    #expect(
+      try Data(contentsOf: journal.photoURL(moved.remainingPhotos[1].id))
+        == Data(repeating: 4, count: 24))
+    #expect(await api.creates == 0)
+    try store.begin(at: GeoPoint(latitude: 33, longitude: 119)!)
+    let other = store.draft
+    #expect(throws: ContributionFailure.accountBusy) {
+      try store.selectLocation(point, for: before.id)
+    }
+    #expect(store.draft == other, "An obsolete map selection must not move another draft")
+  }
+
+  @Test func editingRequestedPlacePreservesOtherDraftAndResumesItsOwnChanges() async throws {
+    let api = ContributionFixture()
+    let (_, store, journal) = await setup(api)
+    defer { try? journal.clear() }
+    try fill(store)
+    let creation = try #require(store.draft)
+    try await store.edit(55)
+    let editing = try #require(store.draft)
+    #expect(editing.original?.id == 55 && editing.fields.title == "Original")
+    #expect(editing.id != creation.id && store.drafts.count == 2)
+    var fields = editing.fields
+    fields.title = "Unsent edits for this point"
+    store.update(fields)
+    try await store.edit(55)
+    #expect(store.draft?.id == editing.id && store.draft?.fields == fields)
+    try store.openDraft(creation.id)
+    #expect(store.draft == creation)
+    try await store.edit(55)
+    #expect(store.draft?.id == editing.id && store.draft?.fields == fields)
+    #expect(await api.edits == 0)
+    #expect(await api.creates == 0)
+  }
+
+  @Test func brokenCheckpointAndLegacyRecordDoNotBlockHealthyDraftsOrDeleteBytes() async throws {
+    let api = ContributionFixture()
+    let (_, store, journal) = await setup(api)
+    defer { try? journal.clear() }
+    try fill(store)
+    let good = try #require(store.draft)
+    var broken = ContributionDraft(
+      owner: good.owner, origin: good.origin, point: good.point, language: "zh")
+    broken.phase = .uploading
+    try journal.save(broken)
+    let malformed = journal.directory.appendingPathComponent("draft-\(UUID().uuidString).json")
+    let legacy = journal.directory.appendingPathComponent("draft.json")
+    try Data("broken json".utf8).write(to: malformed)
+    try Data("broken legacy".utf8).write(to: legacy)
+    let (_, restored, _) = await setup(api, journal: journal)
+    #expect(restored.draft == good && restored.drafts == [good])
+    #expect(restored.draftRecoveryMessage != nil)
+    #expect(try Data(contentsOf: malformed) == Data("broken json".utf8))
+    #expect(try Data(contentsOf: legacy) == Data("broken legacy".utf8))
+    #expect(
+      FileManager.default.fileExists(
+        atPath: journal.directory.appendingPathComponent("draft-\(broken.id.uuidString).json").path)
+    )
+    #expect(await api.creates == 0)
+    try restored.begin(at: GeoPoint(latitude: 30, longitude: 120)!)
+    #expect(restored.drafts.count == 2)
+  }
+
+  @Test func invalidOtherOwnerAndOriginDraftsDoNotBlockCurrentLibrary() async throws {
+    let api = ContributionFixture()
+    let (_, store, journal) = await setup(api)
+    defer { try? journal.clear() }
+    try fill(store)
+    let good = try #require(store.draft)
+    for (owner, origin) in [("b", good.origin), (good.owner, "https://other.example.invalid")] {
+      var invalid = ContributionDraft(
+        owner: owner, origin: origin, point: good.point, language: "zh")
+      invalid.phase = .uploading
+      try journal.save(invalid)
+    }
+    let library = try journal.readLibrary(owner: good.owner, origin: good.origin)
+    #expect(library.drafts == [good] && !library.hasUnreadableDrafts)
+    let (_, restored, _) = await setup(api, journal: journal)
+    #expect(restored.draft == good && restored.draftRecoveryMessage == nil)
+    #expect(await api.creates == 0)
+  }
+
+  @Test func failedLibraryReadCanRecoverWithoutAnAccountChange() async throws {
+    let api = ContributionFixture()
+    let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let journal = ContributionJournal(directory: path)
+    try Data("not a directory".utf8).write(to: path)
+    let (_, store, _) = await setup(api, journal: journal)
+    defer { try? journal.clear() }
+    #expect(store.message != nil)
+    try FileManager.default.removeItem(at: path)
+    let value = ContributionDraft(
+      owner: "a", origin: "https://i5.example.invalid", point: GeoPoint(latitude: 1, longitude: 1)!,
+      language: "zh")
+    try journal.save(value)
+    store.synchronize()
+    #expect(store.draft == value)
+  }
+
+  @Test func healthyLegacySurvivesAnUnreadableMigrationTarget() throws {
+    let journal = ContributionJournal(
+      directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+    defer { try? journal.clear() }
+    let value = ContributionDraft(
+      owner: "a", origin: "fixture", point: GeoPoint(latitude: 1, longitude: 1)!, language: "zh")
+    try journal.save(value)
+    let target = journal.directory.appendingPathComponent("draft-\(value.id.uuidString).json")
+    let legacy = journal.directory.appendingPathComponent("draft.json")
+    let encoded = try JSONEncoder().encode(value)
+    try encoded.write(to: legacy)
+    try Data("broken migration".utf8).write(to: target)
+    let library = try journal.readLibrary(owner: value.owner, origin: value.origin)
+    #expect(library.drafts == [value] && library.hasUnreadableDrafts)
+    #expect(try Data(contentsOf: legacy) == encoded)
+    #expect(try Data(contentsOf: target) == Data("broken migration".utf8))
+    var recovered = value
+    recovered.fields.title = "Recovered and saved"
+    try journal.save(recovered)
+    let backups = try FileManager.default.contentsOfDirectory(
+      at: journal.directory, includingPropertiesForKeys: nil
+    )
+    .filter { $0.lastPathComponent.hasPrefix("unreadable-") }
+    #expect(backups.count == 1)
+    #expect(try Data(contentsOf: #require(backups.first)) == Data("broken migration".utf8))
+    #expect(try journal.list(owner: value.owner, origin: value.origin) == [recovered])
+    #expect(!FileManager.default.fileExists(atPath: legacy.path))
+  }
+
+  @Test func reopeningADraftThatBecameUnreadableFailsWithoutOpeningAnotherDraft() async throws {
+    let api = ContributionFixture()
+    let (_, store, journal) = await setup(api)
+    defer { try? journal.clear() }
+    try fill(store)
+    let creation = try #require(store.draft)
+    try await store.edit(55)
+    let editing = try #require(store.draft)
+    try store.openDraft(creation.id)
+    let target = journal.directory.appendingPathComponent("draft-\(editing.id.uuidString).json")
+    try Data("broken after listing".utf8).write(to: target)
+    await #expect(throws: ContributionFailure.storage) { try await store.edit(55) }
+    #expect(store.draft == creation && store.draftRecoveryMessage != nil)
+    #expect(throws: ContributionFailure.storage) { try store.openDraft(editing.id) }
+  }
+
+  @Test func failedRecoveryCheckpointDoesNotPublishUnboundPrivateDrafts() async throws {
+    let api = ContributionFixture()
+    let (_, store, journal) = await setup(api)
+    defer { try? journal.clear() }
+    try fill(store)
+    try store.choosePhoto(Data(repeating: 5, count: 16))
+    let saved = try #require(store.draft)
+    let target = journal.directory.appendingPathComponent("draft-\(saved.id.uuidString).json")
+    journal.removePhoto(saved.photoID)
+    // Keep directory preparation and reads available while rejecting only the
+    // recovery checkpoint's atomic replacement of this particular file.
+    try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: target.path)
+    defer { try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: target.path) }
+    #expect(try journal.readLibrary(owner: saved.owner, origin: saved.origin).drafts == [saved])
+    let (_, restored, _) = await setup(api, journal: journal)
+    #expect(restored.message != nil)
+    #expect(restored.draft == nil && restored.drafts.isEmpty && restored.photoPreview == nil)
+    try FileManager.default.setAttributes([.immutable: false], ofItemAtPath: target.path)
+    restored.synchronize()
+    #expect(restored.draft?.id == saved.id && restored.draft?.photoRejected == true)
+  }
+
+  @Test func discardingRecoveredLegacyDoesNotResurrectItOrRemoveOtherDrafts() throws {
+    let journal = ContributionJournal(
+      directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+    defer { try? journal.clear() }
+    let value = ContributionDraft(
+      owner: "a", origin: "fixture", point: GeoPoint(latitude: 1, longitude: 1)!, language: "zh")
+    let other = ContributionDraft(owner: "b", origin: "fixture", point: value.point, language: "zh")
+    try journal.save(value)
+    try journal.save(other)
+    let target = journal.directory.appendingPathComponent("draft-\(value.id.uuidString).json")
+    let legacy = journal.directory.appendingPathComponent("draft.json")
+    try JSONEncoder().encode(value).write(to: legacy)
+    try Data("broken migration".utf8).write(to: target)
+    #expect(try journal.list(owner: value.owner, origin: value.origin) == [value])
+    try journal.remove(value)
+    #expect(try journal.list(owner: value.owner, origin: value.origin).isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: legacy.path))
+    #expect(try journal.list(owner: other.owner, origin: other.origin) == [other])
+    try JSONEncoder().encode(other).write(to: legacy)
+    try journal.remove(value)
+    #expect(FileManager.default.fileExists(atPath: legacy.path))
+  }
+
   private func setup(_ api: ContributionFixture, journal: ContributionJournal? = nil) async -> (
     AccountStore, ContributionStore, ContributionJournal
   ) {
@@ -350,7 +564,7 @@ import Testing
     #expect(throws: ContributionFailure.storage) { try journal.load() }
     let api = ContributionFixture()
     let (_, store, _) = await setup(api, journal: journal)
-    #expect(store.draft == nil && store.message != nil)
+    #expect(store.draft == nil && store.draftRecoveryMessage != nil)
     #expect(await api.creates == 0)
   }
 

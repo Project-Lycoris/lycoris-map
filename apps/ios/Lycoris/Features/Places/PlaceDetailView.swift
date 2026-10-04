@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PlaceDetailView: View {
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
   @Environment(\.lycorisMetadataNow) private var metadataNow
   let place: PlacePresentation
   let bottomInset: CGFloat
@@ -33,7 +34,9 @@ struct PlaceDetailView: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 11) {
-        HStack(alignment: .center, spacing: 11) {
+        // Let compact titles use the button's transparent leading space, keeping
+        // 11pt to the visible icon and the full 44pt button frame for hit testing.
+        HStack(alignment: .center, spacing: horizontalSizeClass == .compact ? 11 - (44 - 20) : 11) {
           Text(place.detailTitle).font(.title3.weight(.semibold))
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)

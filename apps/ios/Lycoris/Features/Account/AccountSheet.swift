@@ -278,6 +278,10 @@ struct AccountPlacesView: View {
               }
           }
           Text("Drafts are saved on this device only.").font(.caption).foregroundStyle(.secondary)
+          if let warning = contributions.draftRecoveryMessage {
+            Text(warning).foregroundStyle(.secondary)
+              .accessibilityIdentifier("contribution.recovery-warning")
+          }
           if let message = contributions.message { Text(message) }
         }
       }

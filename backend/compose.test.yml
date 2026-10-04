@@ -7,6 +7,8 @@ name: lycoris-rust-test
 services:
   postgres:
     image: ${PG_TEST_IMAGE:-postgis/postgis:18-3.6@sha256:60f6ad1d21ea86a67d47780b9a0d1e1d200500f62b19293fa834d0dea80b8677}
+    # This pinned PostGIS digest publishes amd64 only; emulate it on Apple Silicon.
+    platform: linux/amd64
     container_name: lycoris-rust-postgres
     restart: unless-stopped
     environment:

@@ -11,6 +11,9 @@ struct ContributionFields: Codable, Equatable {
   var description = ""
   var openTimeStart = ""
   var openTimeEnd = ""
+  /// UI-only intent. Older drafts and existing places infer the closing day
+  /// from the two times; the API continues to receive only HH:mm values.
+  var closingDayOverride: Bool? = nil
   var language = "zh"
   /// The selected venue for an accessible toilet. `nil` means "not specified".
   /// Optional so pre-upgrade drafts without the key still decode.
@@ -38,7 +41,20 @@ struct ContributionFields: Codable, Equatable {
       && !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       && title.unicodeScalars.count <= 120
       && ((openTimeStart.isEmpty && openTimeEnd.isEmpty)
-        || (Self.validTime(openTimeStart) && Self.validTime(openTimeEnd)))
+        || (Self.validTime(openTimeStart) && Self.validTime(openTimeEnd)
+          && openingHoursMatchClosingDay))
+  }
+
+  var closesNextDay: Bool {
+    closingDayOverride
+      ?? (Self.validTime(openTimeStart) && Self.validTime(openTimeEnd)
+        && openTimeEnd < openTimeStart)
+  }
+
+  var openingHoursMatchClosingDay: Bool {
+    guard Self.validTime(openTimeStart), Self.validTime(openTimeEnd) else { return false }
+    // Equal times retain the shared 24-hour contract, with either UI choice.
+    return openTimeStart == openTimeEnd || closesNextDay == (openTimeEnd < openTimeStart)
   }
 
   static func validTime(_ value: String) -> Bool {
@@ -72,6 +88,7 @@ struct ContributionFields: Codable, Equatable {
   private enum CodingKeys: String, CodingKey {
     case title, category, description, openTimeStart, openTimeEnd, language
     case venueType, unknownVenueType, categories, openingHoursNote
+    case closingDayOverride
   }
 
   init(from decoder: any Decoder) throws {
@@ -82,6 +99,7 @@ struct ContributionFields: Codable, Equatable {
     description = try container.decodeIfPresent(String.self, forKey: .description) ?? ""
     openTimeStart = try container.decodeIfPresent(String.self, forKey: .openTimeStart) ?? ""
     openTimeEnd = try container.decodeIfPresent(String.self, forKey: .openTimeEnd) ?? ""
+    closingDayOverride = try container.decodeIfPresent(Bool.self, forKey: .closingDayOverride)
     language = try container.decodeIfPresent(String.self, forKey: .language) ?? "en"
     venueType = try? container.decodeIfPresent(PlaceVenue.self, forKey: .venueType)
     unknownVenueType = try container.decodeIfPresent(String.self, forKey: .unknownVenueType)
@@ -138,7 +156,12 @@ struct ContributionDraft: Codable, Equatable, Identifiable {
   }
 
   var editable: Bool { phase == .draft }
-  var hasChanges: Bool { original.map { fields != ContributionFields(marker: $0) } ?? true }
+  var hasChanges: Bool {
+    guard let original else { return true }
+    var submittedFields = fields
+    submittedFields.closingDayOverride = nil
+    return submittedFields != ContributionFields(marker: original)
+  }
   var canSubmit: Bool { fields.valid && (hasChanges || photoID != nil) }
 
   var validCheckpoint: Bool {
@@ -219,6 +242,10 @@ struct UploadReceipt: Codable, Equatable {
 /// One private, atomic journal. The final encoded image is written first, never
 /// regenerated on retry. Neither file participates in device/iCloud backups.
 struct ContributionJournal {
+  struct Library {
+    var drafts: [ContributionDraft] = []
+    var hasUnreadableDrafts = false
+  }
   let directory: URL
   init(directory: URL? = nil) {
     self.directory =
@@ -251,12 +278,39 @@ struct ContributionJournal {
     return value
   }
   func list(owner: String, origin: String) throws -> [ContributionDraft] {
+    try readLibrary(owner: owner, origin: origin).drafts
+  }
+
+  func readLibrary(owner: String, origin: String) throws -> Library {
     try prepare()
-    if FileManager.default.fileExists(atPath: record.path), let legacy = try load() {
-      try save(legacy)
-      try FileManager.default.removeItem(at: record)
+    var library = Library()
+    var legacyFallback: ContributionDraft?
+    if FileManager.default.fileExists(atPath: record.path) {
+      do {
+        let legacy = try JSONDecoder().decode(
+          ContributionDraft.self, from: Data(contentsOf: record))
+        guard legacy.validCheckpoint else { throw ContributionFailure.storage }
+        if legacy.owner == owner, legacy.origin == origin, legacy.phase != .complete {
+          legacyFallback = legacy
+        }
+        // A newer per-draft checkpoint takes precedence over a leftover legacy
+        // file after an interrupted migration.
+        if FileManager.default.fileExists(atPath: draftURL(legacy.id).path) {
+          let migrated = try JSONDecoder().decode(
+            ContributionDraft.self, from: Data(contentsOf: draftURL(legacy.id)))
+          guard migrated.validCheckpoint, migrated.id == legacy.id,
+            migrated.owner == legacy.owner, migrated.origin == legacy.origin
+          else { throw ContributionFailure.storage }
+        } else {
+          try save(legacy)
+        }
+        try FileManager.default.removeItem(at: record)
+        legacyFallback = nil
+      } catch {
+        library.hasUnreadableDrafts = true
+      }
     }
-    return try FileManager.default.contentsOfDirectory(
+    let files = try FileManager.default.contentsOfDirectory(
       at: directory, includingPropertiesForKeys: [.contentModificationDateKey]
     )
     .filter { $0.lastPathComponent.hasPrefix("draft-") && $0.pathExtension == "json" }
@@ -269,23 +323,59 @@ struct ContributionJournal {
         ?? .distantPast
       return a > b
     }
-    .compactMap { url in
-      let value = try JSONDecoder().decode(ContributionDraft.self, from: Data(contentsOf: url))
-      guard value.validCheckpoint else { throw ContributionFailure.storage }
-      return value.owner == owner && value.origin == origin && value.phase != .complete
-        ? value : nil
+    for url in files {
+      do {
+        let value = try JSONDecoder().decode(ContributionDraft.self, from: Data(contentsOf: url))
+        guard value.owner == owner, value.origin == origin else { continue }
+        guard value.validCheckpoint, url == draftURL(value.id) else {
+          throw ContributionFailure.storage
+        }
+        if value.phase != .complete { library.drafts.append(value) }
+      } catch {
+        // Leave the original checkpoint and photo bytes available for recovery.
+        // One unreadable entry must not prevent loading unrelated healthy work.
+        library.hasUnreadableDrafts = true
+      }
     }
+    if let legacyFallback, !library.drafts.contains(where: { $0.id == legacyFallback.id }) {
+      library.drafts.append(legacyFallback)
+    }
+    return library
   }
   func modifiedAt(_ id: UUID) -> Date? {
     try? draftURL(id).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
   }
   func save(_ draft: ContributionDraft) throws {
     try prepare()
+    let target = draftURL(draft.id)
+    if FileManager.default.fileExists(atPath: target.path) {
+      let previous = try Data(contentsOf: target)
+      let saved = try? JSONDecoder().decode(ContributionDraft.self, from: previous)
+      if saved?.validCheckpoint != true || saved?.id != draft.id
+        || saved?.owner != draft.owner || saved?.origin != draft.origin
+      {
+        // A healthy legacy draft may recover over a damaged UUID checkpoint.
+        // Preserve those original bytes before any automatic or user save.
+        let backup = directory.appendingPathComponent(
+          "unreadable-\(draft.id.uuidString)-\(Self.hash(previous)).json")
+        if !FileManager.default.fileExists(atPath: backup.path) {
+          try previous.write(
+            to: backup, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        }
+      }
+    }
     try JSONEncoder().encode(draft).write(
-      to: draftURL(draft.id),
+      to: target,
       options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
   }
   func remove(_ draft: ContributionDraft) throws {
+    if let data = try? Data(contentsOf: record),
+      let legacy = try? JSONDecoder().decode(ContributionDraft.self, from: data),
+      legacy.id == draft.id, legacy.owner == draft.owner, legacy.origin == draft.origin
+    {
+      // Discarding a recovered legacy draft must not migrate it back on refresh.
+      try FileManager.default.removeItem(at: record)
+    }
     let url = draftURL(draft.id)
     if FileManager.default.fileExists(atPath: url.path) {
       try FileManager.default.removeItem(at: url)

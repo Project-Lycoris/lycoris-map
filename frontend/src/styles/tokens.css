@@ -30,8 +30,14 @@
     /* Fonts: open fonts are self-hosted; SF stays a system-only request.
      * Figma desktop headings use Noto Sans Regular 400. */
     --ui-font-logo: 'Fredoka', 'Noto Sans', sans-serif;
-    --ui-font-nav: 'Roboto', 'Noto Sans', sans-serif;
+    --ui-font-nav: 'Noto Sans', 'Noto Sans SC', sans-serif;
     --ui-font-heading: 'Noto Sans', 'Noto Sans SC', sans-serif;
-    --ui-font-body:
-        -apple-system, BlinkMacSystemFont, 'Roboto', 'Noto Sans', 'Noto Sans SC', sans-serif;
+    --ui-font-body: -apple-system, BlinkMacSystemFont, 'Noto Sans', 'Noto Sans SC', sans-serif;
+}
+
+/* Keep Tailwind's base text and sans utilities on the same approved font stack. */
+@theme inline {
+    --font-sans: var(--ui-font-body);
+    --default-font-family:
+        -apple-system, BlinkMacSystemFont, 'Noto Sans', 'Noto Sans SC', sans-serif;
 }

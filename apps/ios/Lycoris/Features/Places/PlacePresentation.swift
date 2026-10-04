@@ -98,7 +98,11 @@ struct PlacePresentation: Identifiable, Equatable, Sendable {
     else {
       return String(appLocalized: "Hours not provided")
     }
-    return start == end ? String(appLocalized: "Open 24 hours") : "\(start)–\(end)"
+    if start == end { return String(appLocalized: "Open 24 hours") }
+    if end < start {
+      return String(format: String(appLocalized: "%@–%@ (next day)", table: "OpeningHours"), start, end)
+    }
+    return "\(start)–\(end)"
   }
 
   static func imageURL(_ path: String?, baseURL: URL?) -> URL? {

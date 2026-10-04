@@ -37,6 +37,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Test synthetic QA bootstrap and isolation guards
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p '*_test.py'
+
       - name: Set up JDK 17
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:

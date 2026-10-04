@@ -13,6 +13,7 @@
 //! - 原文与译文编辑共用同一 `marker.version`，任何文本变化都推进版本并以行锁串行；
 //! - 提交成功后才使缓存失效，缓存故障只受控记录，绝不回退已提交的写入。
 
+use crate::users::USERNAME_MAX;
 use sqlx::{PgConnection, PgPool};
 
 use crate::modules::markers::cache::MarkerCache;
@@ -30,7 +31,6 @@ use crate::modules::markers::write_model::{
 /// 数据库 `varchar` 列的字符上限（PostgreSQL `char_length` 语义）。
 const TITLE_MAX: usize = 120;
 const CATEGORY_MAX: usize = 64;
-const USERNAME_MAX: usize = 64;
 const PUBLIC_ID_MAX: usize = 64;
 const CLIENT_REQUEST_ID_MAX: usize = 64;
 

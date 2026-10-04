@@ -9,6 +9,15 @@ final class ContributionStore {
   private(set) var isWorking = false
   private(set) var message: String?
   private(set) var photoPreview: Data?
+  private(set) var hasUnreadableDrafts = false
+  var draftRecoveryMessage: String? {
+    hasUnreadableDrafts
+      ? String(
+        appLocalized:
+          "Some saved drafts could not be opened. Their files have been kept on this device.",
+        table: "ContributionRecovery")
+      : nil
+  }
   private let journal: ContributionJournal
   private var account: AccountStore?
   private var boundEpoch: UUID?
@@ -46,35 +55,51 @@ final class ContributionStore {
       resume()
       return
     }
-    boundEpoch = account.epoch
     do {
-      drafts = try journal.list(owner: owner, origin: origin)
-      if var saved = drafts.first {
+      let library = try journal.readLibrary(owner: owner, origin: origin)
+      var restored = library.drafts.first
+      var preview: Data?
+      var recoveryMessage: String?
+      if var saved = restored {
         if saved.phase == .editing {
           saved.phase = .uncertainEdit
           try journal.save(saved)
         }
-        draft = saved
         if saved.photoID != nil {
-          photoPreview = try? journal.photo(saved)
-          if photoPreview == nil && saved.phase == .draft {
+          preview = try? journal.photo(saved)
+          if preview == nil && saved.phase == .draft {
             saved.photoRejected = true
-            draft = saved
             try journal.save(saved)
-            message = String(
+            recoveryMessage = String(
               appLocalized: "The saved photo is unavailable. Please choose it again.")
           }
         }
-        resume()
+        restored = saved
       }
-    } catch { message = String(appLocalized: "Could not read the saved contribution.") }
+      // Publish only after every recovery checkpoint succeeds. A failed
+      // restore must not expose private drafts without a bound account epoch.
+      drafts = library.drafts
+      if let restored, let index = drafts.firstIndex(where: { $0.id == restored.id }) {
+        drafts[index] = restored
+      }
+      hasUnreadableDrafts = library.hasUnreadableDrafts
+      draft = restored
+      photoPreview = preview
+      message = recoveryMessage
+      boundEpoch = account.epoch
+      resume()
+    } catch {
+      invalidate(force: true)
+      message = String(appLocalized: "Could not read the saved contribution.")
+    }
   }
 
   func begin(at point: GeoPoint) throws {
     guard let account, let owner = account.user?.publicId,
       let origin = account.baseURL?.absoluteString, boundEpoch == account.epoch
     else { throw AccountFailure(status: 401) }
-    guard !isWorking else { return }
+    guard !isWorking else { throw ContributionFailure.accountBusy }
+    stop()
     if let current = draft {
       if current.phase == .complete {
         try journal.remove(current)
@@ -98,7 +123,15 @@ final class ContributionStore {
     guard let account, let owner = account.user?.publicId, let token = boundEpoch,
       let origin = account.baseURL?.absoluteString
     else { throw AccountFailure(status: 401) }
-    guard !isWorking else { return }
+    guard !isWorking else { throw ContributionFailure.accountBusy }
+    // Reopening the same point resumes its edits and upload receipts. An
+    // unrelated draft must never substitute for the requested point.
+    if draft?.original?.id == id, draft?.phase != .complete { return }
+    if let saved = drafts.first(where: { $0.original?.id == id }) {
+      try openDraft(saved.id)
+      return
+    }
+    stop()
     if let current = draft {
       if current.phase == .complete {
         try journal.remove(current)
@@ -237,18 +270,27 @@ final class ContributionStore {
   func refreshDrafts() {
     guard let owner = account?.user?.publicId, let origin = account?.baseURL?.absoluteString else {
       drafts = []
+      hasUnreadableDrafts = false
       return
     }
-    do { drafts = try journal.list(owner: owner, origin: origin) } catch {
+    do {
+      let library = try journal.readLibrary(owner: owner, origin: origin)
+      drafts = library.drafts
+      hasUnreadableDrafts = library.hasUnreadableDrafts
+    } catch {
       message = String(appLocalized: "Could not read the saved contribution.")
     }
   }
   func openDraft(_ id: UUID) throws {
-    guard !isWorking, let owner = account?.user?.publicId,
+    guard !isWorking else { throw ContributionFailure.accountBusy }
+    guard let owner = account?.user?.publicId,
       let origin = account?.baseURL?.absoluteString
-    else { return }
+    else { throw AccountFailure(status: 401) }
     let values = try journal.list(owner: owner, origin: origin)
-    guard var value = values.first(where: { $0.id == id }) else { return }
+    guard var value = values.first(where: { $0.id == id }) else {
+      refreshDrafts()
+      throw ContributionFailure.storage
+    }
     stop()
     if value.phase == .editing {
       value.phase = .uncertainEdit
@@ -283,6 +325,17 @@ final class ContributionStore {
     guard var value = draft, value.original == nil, value.editable, !isWorking else { return }
     value.point = point
     try checkpoint(value)
+  }
+
+  func selectLocation(_ point: GeoPoint, for draftID: UUID?) throws {
+    if let draftID {
+      guard let draft, draft.id == draftID, draft.original == nil,
+        draft.editable, !isWorking
+      else { throw ContributionFailure.accountBusy }
+      try move(to: point)
+    } else {
+      try begin(at: point)
+    }
   }
 
   func removePhoto() throws {
@@ -354,6 +407,7 @@ final class ContributionStore {
     message = nil
     paused = false
     drafts = []
+    hasUnreadableDrafts = false
   }
 
   private func stop() {
