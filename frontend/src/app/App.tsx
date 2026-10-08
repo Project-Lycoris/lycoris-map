@@ -2,12 +2,15 @@ import { lazy, Suspense } from 'react'
 import { BrowserRouter, useLocation } from 'react-router'
 import { MapPage } from './MapPage'
 import { AppProviders } from './providers'
+import { IcpFiling } from './IcpFiling'
 const AdminPage = lazy(() => import('@/features/admin/AdminPage'))
 const DevelopmentPage = import.meta.env.DEV ? lazy(() => import('./devRoutes')) : null
 export function App() {
     return (
         <BrowserRouter>
-            <Application />
+            <IcpFiling>
+                <Application />
+            </IcpFiling>
         </BrowserRouter>
     )
 }

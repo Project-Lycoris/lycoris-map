@@ -1,0 +1,5 @@
+__pycache__/
+.env
+!copy-snapshot.py
+!restore-copy.py
+!verify-copy.py
