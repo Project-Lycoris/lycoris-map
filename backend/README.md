@@ -94,4 +94,4 @@ Build the runtime image from `backend/`:
 docker build --target runtime -t lycoris-backend:local .
 ```
 
-The runtime runs as a non-root user. Keep uploads on a writable persistent volume, and keep credentials outside the image. `compose.release.yml` is for local container checks; [production configuration](deploy/production/README.md) covers the live stack, HTTPS, migrations, and backups.
+The runtime runs as a non-root user. Keep uploads on a writable persistent volume, and keep credentials outside the image. `compose.release.yml` is for local container checks; [Shanghai production configuration](deploy/shanghai/README.md) covers the shared backend for both websites, HTTPS, migrations, and backups.

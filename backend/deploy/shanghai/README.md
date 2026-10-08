@@ -5,6 +5,14 @@ Shanghai is the sole write authority. The overseas Web remains on Cloudflare Pag
 `api.lycoris-map.com` is a Cloudflare Worker route to the same Shanghai API, preserving
 the URL used by installed native apps. See `../cloudflare-api/worker.js`.
 
+Cutover completed on **2026-10-08**. The active database is
+`lycoris_import_2026100802`, with originals in `/opt/lycoris/data/uploads-final-20261008`.
+The previous application is stopped with container restart disabled. Both Web
+domains and the native API were checked against the same public marker IDs;
+search, nearby results, details, images, authorization and HTTPS redirects passed.
+The complete source snapshot, final Shanghai dump and private configuration are
+also retained in the operator's local `Documents/Lycoris-Backups` directory.
+
 ## Host layout
 
 - Release: `/opt/lycoris/releases/shanghai-20261008` (backend from `ded3b83`).
@@ -45,6 +53,12 @@ Old sessions are not carried over; users sign in again after the cutover.
 6. Start Shanghai with the final imported database. Activate the API Worker route,
    verify both domains and native API requests, and leave the old application
    stopped. Retain the old database and images as historical recovery material.
+
+The snapshot helpers describe the one-time Korea-to-Shanghai migration. For later
+releases, back up the **active Shanghai database** and upload directory, explicitly
+run the new image's `--migrate`, then recreate only the app service with this stack's
+`compose.yml` and `/opt/lycoris/private/deploy.env`. Do not deploy against the retired
+Korea stack or copy its historical database over new Shanghai writes.
 
 An application rollback must preserve new user writes. Do not blindly restore the
 old source database after public cutover, drop volumes, or lower ID sequences.
