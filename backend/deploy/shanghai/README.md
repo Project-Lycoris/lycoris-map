@@ -65,10 +65,12 @@ old source database after public cutover, drop volumes, or lower ID sequences.
 
 ## Domain, filing and TLS
 
-The apex and `www` DNS records resolve to Shanghai. The Web footer shows
-`辽ICP备2026022983号-1` on these hosts and links to `https://beian.miit.gov.cn/`.
-The footer reserves its measured height, including the phone safe area, so it
-cannot cover bottom-sheet actions. Other domains do not display this filing.
+The apex and `www` DNS records resolve to Shanghai. Both public websites display
+`辽ICP备2026022983号-1` and `辽公网安备21030202000333号`, with the official public-security
+icon and links to the corresponding government portals. On the map, these links
+precede Leaflet in the existing attribution control. They wrap on narrow screens
+and move with the mobile sheet; no separate fixed-height filing bar is reserved.
+Administration retains the same links in a normal footer.
 
 The supplied certificate covers both `.cn` hostnames and expires on
 **2026-12-22 00:59:59 Asia/Shanghai**. It is stored under
@@ -84,4 +86,3 @@ served by Rust's authorized upload routes; `.com` retains its existing authorize
 R2 delivery cache.
 
 [Official filing-link guidance](https://cloud.tencent.com/document/product/243/61412).
-Add the separate public-security filing only after its own number is issued.

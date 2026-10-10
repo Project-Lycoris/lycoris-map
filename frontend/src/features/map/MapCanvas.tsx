@@ -12,6 +12,8 @@ import L, { type Map as LeafletMap } from 'leaflet'
 import type { Language } from '@/shared/i18n'
 import { resolveTitle, type SyntheticMarker } from './syntheticMarkers'
 import { toLeafletTuple } from './coords'
+import { mapAttributionPrefix } from '@/shared/siteFilings'
+import '@/shared/site-filings.css'
 
 const TILE_URL = '/tiles/osm/{z}/{x}/{y}.png'
 const OSM_ATTRIBUTION =
@@ -80,7 +82,7 @@ export function MapCanvas({ markers, language }: MapCanvasProps) {
                 zoomControl={false}
                 attributionControl={false}
             >
-                <AttributionControl prefix='<a href="https://leafletjs.com/" title="A JavaScript library for interactive maps">Leaflet</a>' />
+                <AttributionControl prefix={mapAttributionPrefix} />
                 <TileLayer url={TILE_URL} attribution={OSM_ATTRIBUTION} />
                 <MapInstanceProbe onInstance={handleInstance} />
                 <ViewReporter onChange={handleViewChange} />

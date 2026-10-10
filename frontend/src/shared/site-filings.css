@@ -1,0 +1,30 @@
+.site-filing-link {
+    display: inline-block;
+    white-space: nowrap;
+}
+
+.leaflet-container a.site-filing-link,
+.site-filings-footer a {
+    color: #555;
+    text-decoration: none;
+}
+
+.site-filing-link img {
+    display: inline-block;
+    width: auto;
+    height: 12px;
+    margin-inline-end: 3px;
+    vertical-align: -2px;
+}
+
+.leaflet-container a.site-filing-link:hover,
+.site-filings-footer a:hover {
+    text-decoration: underline;
+}
+
+.site-filings-footer {
+    padding: 4px 11px calc(4px + env(safe-area-inset-bottom, 0px));
+    background: var(--ui-panel-surface);
+    text-align: right;
+    font: 400 11px/1.4 var(--ui-font-body);
+}

@@ -1,5 +1,4 @@
 import { readAccountPlace } from '@/shared/api/privatePlaces'
-import { useFilingInset } from '@/app/IcpFiling'
 import { mapSourceNames } from '@/features/map/mapSources'
 import { usePreferences } from '@/features/preferences/PreferencesProvider'
 import { isSettingsPanel, settingsTitles, SettingsContent } from '@/features/preferences/Settings'
@@ -113,8 +112,7 @@ export function MapShell({
     // One visual-viewport snapshot feeds both the CSS shell height and every JS
     // sheet calc, so `100dvh` can never disagree with `innerHeight` again.
     const viewport = useViewportSnapshot()
-    const filingInset = useFilingInset()
-    const viewportHeight = Math.max(1, viewport.height - filingInset)
+    const viewportHeight = viewport.height
     const navigate = useNavigate()
     const mobileFixture = Boolean(sample) && location.pathname === '/__design/mobile'
     const params = new URLSearchParams(location.search)
@@ -157,7 +155,7 @@ export function MapShell({
     // top is `viewport.bottom - sheetHeight`; the tool controls are placed at
     // shell-relative offsets (54px / 152px) and must be compared in the same
     // frame, not in visual-window coordinates where the keyboard pan is dropped.
-    const sheetTop = viewport.bottom - filingInset - sheetHeight
+    const sheetTop = viewport.bottom - sheetHeight
     // Publish the shared snapshot on the document root for every map layout, so
     // the shell and portalled overlays (the account dialog) read the same numbers
     // on phones, landscape and tablets alike. Desktop values are unchanged

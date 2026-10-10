@@ -9,6 +9,8 @@ import TencentBaseMap from './tencent/TencentBaseMap'
 import { watchTileLayer } from './watchTileLayer'
 import { scheduleIdlePreload } from './idlePreload'
 import { loadTencentResources } from './tencent/resources'
+import { mapAttributionPrefix } from '@/shared/siteFilings'
+import '@/shared/site-filings.css'
 const CENTER: [number, number] = [31.2304, 121.4737]
 export function MapSurface({
     onMap,
@@ -30,7 +32,7 @@ export function MapSurface({
             className="product-map"
             attributionControl={false}
         >
-            <AttributionControl prefix='<a href="https://leafletjs.com/" title="A JavaScript library for interactive maps">Leaflet</a>' />
+            <AttributionControl prefix={mapAttributionPrefix} />
             <BaseMapLayers />
             <MapLifecycle />
             <MapPick onPick={onPick} />
