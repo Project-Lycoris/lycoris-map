@@ -32,6 +32,7 @@ beforeEach(() => {
 })
 afterEach(() => {
     cleanup()
+    vi.useRealTimers()
     clients.splice(0).forEach((client) => client.clear())
     vi.resetAllMocks()
     vi.unstubAllGlobals()
@@ -348,4 +349,94 @@ it('keeps a 404-pruned point dead after closing detail while the region keeps fa
     vi.mocked(reads.readViewport).mockResolvedValue([syntheticPlace({ id: 1, title: 'Back' })])
     act(() => result.current.onView(mapView(41, 42, 131, 132, { lat: 41.5, lng: 131.5 }, 14)))
     await waitFor(() => expect(result.current.markers[0]?.title).toBe('Back'), { timeout: 4000 })
+})
+
+const flush = () =>
+    act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+        for (let i = 0; i < 5; i += 1) await Promise.resolve()
+    })
+
+it('shows the places loading hint only after three seconds with no pins to show', async () => {
+    vi.useFakeTimers()
+    vi.mocked(reads.readSearch).mockImplementation(() => new Promise<never>(() => {}))
+    const { result } = renderHook(() => usePlaceBrowse('en', null, 'place'), { wrapper: wrapper() })
+    await flush()
+    expect(result.current.state.pending).toBe(true)
+    expect(result.current.results).toEqual([])
+    expect(result.current.state.loading).toBe(false)
+    await act(async () => {
+        vi.advanceTimersByTime(2999)
+    })
+    expect(result.current.state.loading).toBe(false)
+    await act(async () => {
+        vi.advanceTimersByTime(1)
+    })
+    expect(result.current.state.loading).toBe(true)
+})
+
+it('does not show the loading hint while previous pins are still on screen', async () => {
+    vi.useFakeTimers()
+    let resolveFirst!: (value: ReturnType<typeof syntheticPlace>[]) => void
+    vi.mocked(reads.readViewport).mockImplementationOnce(
+        () =>
+            new Promise((resolve) => {
+                resolveFirst = resolve
+            }),
+    )
+    const { result } = renderHook(() => usePlaceBrowse('en', null), { wrapper: wrapper() })
+    act(() => result.current.onView(mapView(31, 32, 121, 122, { lat: 31.5, lng: 121.5 }, 14)))
+    await act(async () => {
+        await vi.advanceTimersByTimeAsync(250)
+    })
+    await flush()
+    await act(async () => {
+        resolveFirst([syntheticPlace()])
+    })
+    await flush()
+    expect(result.current.results).toHaveLength(1)
+    vi.mocked(reads.readViewport).mockImplementation(() => new Promise<never>(() => {}))
+    act(() => result.current.onView(mapView(41, 42, 131, 132, { lat: 41.5, lng: 131.5 }, 14)))
+    await act(async () => {
+        await vi.advanceTimersByTimeAsync(250)
+    })
+    // The second read is still in flight while the previous pins stay on screen.
+    expect(reads.readViewport).toHaveBeenCalledTimes(2)
+    await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000)
+    })
+    expect(result.current.state.loading).toBe(false)
+    expect(result.current.results).toHaveLength(1)
+})
+
+it('surfaces the first failure while React Query is still retrying, then clears it on success', async () => {
+    vi.useFakeTimers()
+    let attempts = 0
+    vi.mocked(reads.readSearch).mockImplementation(() => {
+        attempts += 1
+        return attempts === 1
+            ? Promise.reject(new ApiError(503, 'Offline'))
+            : new Promise<never>(() => {})
+    })
+    const { result } = renderHook(() => usePlaceBrowse('en', null, 'place'), { wrapper: wrapper() })
+    await flush()
+    expect(result.current.state.pending).toBe(true)
+    expect(result.current.state.error).toContain('temporarily unavailable')
+    expect(result.current.state.loading).toBe(false)
+    vi.mocked(reads.readSearch).mockResolvedValue([syntheticPlace({ title: 'Recovered' })])
+    await act(async () => {
+        vi.advanceTimersByTime(2000)
+    })
+    await flush()
+    expect(result.current.state.error).toBeNull()
+    expect(result.current.results[0]?.title).toBe('Recovered')
+    expect(result.current.state.loading).toBe(false)
+})
+
+it('does not offer retry for a 404 place detail', async () => {
+    vi.mocked(reads.readPublicPlace).mockRejectedValue(new ApiError(404, 'HTTP 404'))
+    const { result } = renderHook(() => usePlaceBrowse('en', '1'), { wrapper: wrapper() })
+    expect(result.current.detailState.retryable).toBe(true)
+    await waitFor(() => expect(result.current.detailState.error).toContain('unavailable'))
+    expect(result.current.detailState.retryable).toBe(false)
 })
