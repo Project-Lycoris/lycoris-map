@@ -71,7 +71,9 @@ export function AuthForm({
             const time = Date.now()
             setNow(time)
             setSendUntil(time + delay * 1000)
-            if (error instanceof ApiError && error.code === 42931) setLockUntil(time + delay * 1000)
+            // 42931 locks the verification code; 42933 locks sign-in itself.
+            if (error instanceof ApiError && (error.code === 42931 || error.code === 42933))
+                setLockUntil(time + delay * 1000)
         }
     }
     const send = async () => {

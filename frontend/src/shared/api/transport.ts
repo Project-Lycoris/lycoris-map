@@ -130,6 +130,16 @@ function messageFromBody(status: number, body: unknown): { code?: number; messag
     return { message: `HTTP ${status}` }
 }
 
+/**
+ * Preserve the raw response body on `ApiError` so callers can read details the
+ * transport does not interpret itself (for example `data.retryAfterSeconds` on
+ * a 429). Only the response payload is stored, never the request body.
+ */
+function rawBody(body: unknown): string | undefined {
+    if (body === undefined) return undefined
+    return typeof body === 'string' ? body : JSON.stringify(body)
+}
+
 /** Distinguish the backend's role denial from second-factor and unknown 403s. */
 function accessDenied(status: number, body: unknown, path: string): boolean {
     return (
@@ -215,6 +225,7 @@ export async function request(path: string, options: RequestOptions = {}): Promi
                 code,
                 requestId,
                 accessDenied: accessDenied(response.status, parsed, path),
+                body: rawBody(parsed),
             })
         }
 
@@ -264,6 +275,7 @@ export async function requestBlob(path: string, options: BlobRequestOptions = {}
                 code,
                 requestId,
                 accessDenied: accessDenied(response.status, parsed, path),
+                body: rawBody(parsed),
             })
         }
 

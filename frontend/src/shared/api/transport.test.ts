@@ -111,6 +111,29 @@ describe('request', () => {
         expect(apiError.message).toBe('Invalid username or password')
     })
 
+    it('stores the raw response body on a 429 so retry hints survive transport', async () => {
+        stubFetch(
+            jsonResponse(
+                {
+                    code: 42933,
+                    message: 'Too many sign-in attempts. Try again later.',
+                    data: { retryAfterSeconds: 7 },
+                },
+                { status: 429, headers: { 'content-type': 'application/json' } },
+            ),
+        )
+        const error = (await request('/api/login', {
+            method: 'POST',
+            json: { username: 'synthetic', password: 'synthetic-password' },
+        }).catch((value: unknown) => value)) as ApiError
+        expect(error).toBeInstanceOf(ApiError)
+        expect(error.status).toBe(429)
+        expect(error.code).toBe(42933)
+        expect(JSON.parse(error.body ?? '{}')).toMatchObject({ data: { retryAfterSeconds: 7 } })
+        // Only the response is kept; the request credentials must never leak in.
+        expect(error.body).not.toContain('synthetic-password')
+    })
+
     it('reads the fixed 401 security body', async () => {
         stubFetch(
             jsonResponse(
@@ -208,6 +231,7 @@ describe('requestBlob', () => {
         expect(error.status).toBe(404)
         expect(error.message).toBe('HTTP 404')
         expect(error.requestId).toBe('req-404')
+        expect(error.body).toBeUndefined()
     })
 
     it('parses a JSON error body on failure instead of returning it as bytes', async () => {
@@ -221,6 +245,23 @@ describe('requestBlob', () => {
             status: 404,
             message: '用户不存在',
         })
+    })
+
+    it('stores the raw JSON response body for blob failures too', async () => {
+        stubFetch(
+            jsonResponse(
+                {
+                    code: 42933,
+                    message: 'Too many sign-in attempts. Try again later.',
+                    data: { retryAfterSeconds: 7 },
+                },
+                { status: 429, headers: { 'content-type': 'application/json' } },
+            ),
+        )
+        const error = (await requestBlob('/api/me/avatar').catch(
+            (value: unknown) => value,
+        )) as ApiError
+        expect(JSON.parse(error.body ?? '{}')).toMatchObject({ data: { retryAfterSeconds: 7 } })
     })
 
     it('always issues a plain GET with no request body', async () => {

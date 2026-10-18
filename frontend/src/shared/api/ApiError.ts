@@ -21,7 +21,7 @@ export class ApiError extends Error {
             kind?: 'http' | 'network' | 'timeout'
             code?: number | undefined
             requestId?: string | undefined
-            body?: string
+            body?: string | undefined
             accessDenied?: boolean
         } = {},
     ) {
