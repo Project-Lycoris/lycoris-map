@@ -113,6 +113,10 @@ impl MarkerWriteService {
         let category = categories[0].clone();
         let opening_hours_note = resolve_hours_note(req.opening_hours_note.as_deref(), None)?;
         let title = req.title.clone().expect("已校验必填字段");
+        // 全空白标题会在审核后公开显示，属于无效内容：只校验，不主动 trim 后存储。
+        if title.trim().is_empty() {
+            return Err(WriteError::BadRequest("title 不能为空".to_string()));
+        }
         if db_len(&title) > TITLE_MAX {
             return Err(WriteError::BadRequest("title 过长".to_string()));
         }
@@ -280,6 +284,14 @@ impl MarkerWriteService {
         )?;
         if db_len(&category) > CATEGORY_MAX {
             return Err(WriteError::BadRequest("category 过长".to_string()));
+        }
+        // 显式携带的标题不得为空白；省略 title（None）时保留原值，行为不变。
+        if req
+            .title
+            .as_deref()
+            .is_some_and(|title| title.trim().is_empty())
+        {
+            return Err(WriteError::BadRequest("title 不能为空".to_string()));
         }
         let text = resolve_edit_text(
             &mut tx,
@@ -532,6 +544,14 @@ impl MarkerWriteService {
             req.opening_hours_note.as_deref(),
             marker.opening_hours_note.as_deref(),
         )?;
+        // 管理员直编与公开提案同一口径：显式携带的标题不得为空白；省略时保留原值。
+        if req
+            .title
+            .as_deref()
+            .is_some_and(|title| title.trim().is_empty())
+        {
+            return Err(WriteError::BadRequest("title 不能为空".to_string()));
+        }
         let text = resolve_edit_text(
             &mut tx,
             &marker,

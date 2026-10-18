@@ -312,6 +312,32 @@ async fn create_validates_required_fields_ranges_lengths_and_open_time() {
 }
 
 #[tokio::test]
+async fn create_rejects_blank_titles() {
+    let (_temp, pool) = TempDatabase::create_migrated().await;
+    let redis = connect_redis().await;
+    let write = write_service(pool.clone(), redis, &unique_cache_namespace());
+    let actor = owner();
+
+    // 空串、纯空格、全角空格、制表符/换行及其组合都必须拒绝。
+    for blank in ["", "   ", "\u{3000}", "\t\n", " \u{3000}\t "] {
+        let mut req = valid_create();
+        req.title = Some(blank.to_string());
+        assert_bad(
+            write.create_marker(&actor, "zh", req).await.unwrap_err(),
+            "title 不能为空",
+        );
+    }
+
+    // 正常标题（含首尾空格）仍通过，且只校验不 trim 存储。
+    let mut ok = valid_create();
+    ok.title = Some("  正常标题  ".to_string());
+    let row = write.create_marker(&actor, "zh", ok).await.unwrap();
+    assert_eq!(row.title, "  正常标题  ", "不得主动 trim 后存储");
+
+    pool.close().await;
+}
+
+#[tokio::test]
 async fn concurrent_create_with_same_client_request_id_returns_same_marker() {
     let (_temp, pool) = TempDatabase::create_migrated().await;
     let redis = connect_redis().await;
@@ -728,6 +754,124 @@ async fn user_patch_creates_pending_proposal_only() {
     .await
     .unwrap();
     assert!(!owner_flag);
+
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn edit_proposal_rejects_blank_title_and_keeps_original_when_omitted() {
+    let (_temp, pool) = TempDatabase::create_migrated().await;
+    let redis = connect_redis().await;
+    let write = write_service(pool.clone(), redis, &unique_cache_namespace());
+    let marker = seed_marker(
+        &pool,
+        Seed {
+            title: "原标题".to_string(),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    // 显式携带空白标题一律 400，且不落库提案。
+    for blank in ["", "   ", "\u{3000}", "\t\n"] {
+        let error = write
+            .create_edit_proposal(
+                &owner(),
+                "zh",
+                marker,
+                MarkerUpdateRequest {
+                    title: Some(blank.to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_bad(error, "title 不能为空");
+    }
+    let proposals = count(
+        &pool,
+        "SELECT count(*) FROM marker_edit_proposals WHERE marker_id = $1",
+        &[marker],
+    )
+    .await;
+    assert_eq!(proposals, 0, "空白标题不得生成提案");
+
+    // 省略 title（只改描述）保持原值，行为不变。
+    let returned = write
+        .create_edit_proposal(
+            &owner(),
+            "zh",
+            marker,
+            MarkerUpdateRequest {
+                description: Some("新描述".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(returned.title, "原标题");
+    let proposed: String =
+        sqlx::query_scalar("SELECT title FROM marker_edit_proposals WHERE marker_id = $1")
+            .bind(marker)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(proposed, "原标题", "省略 title 应保留点位原值");
+
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn admin_update_rejects_blank_title_and_keeps_original_when_omitted() {
+    let (_temp, pool) = TempDatabase::create_migrated().await;
+    let redis = connect_redis().await;
+    let write = write_service(pool.clone(), redis, &unique_cache_namespace());
+    let marker = seed_marker(
+        &pool,
+        Seed {
+            title: "原标题".to_string(),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    // 管理员直编显式携带空白标题同样 400，且不写入任何字段。
+    for blank in ["", "   ", "\u{3000}", "\t\n"] {
+        let error = write
+            .admin_update_marker(
+                &admin(),
+                "zh",
+                marker,
+                MarkerUpdateRequest {
+                    title: Some(blank.to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_bad(error, "title 不能为空");
+    }
+    let title: String = sqlx::query_scalar("SELECT title FROM map_markers WHERE id = $1")
+        .bind(marker)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(title, "原标题", "空白标题不得写入");
+
+    // 省略 title（只改类别）保持原值。
+    let updated = write
+        .admin_update_marker(
+            &admin(),
+            "zh",
+            marker,
+            MarkerUpdateRequest {
+                category: Some("baby_room".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.title, "原标题", "省略 title 应保留原点位标题");
 
     pool.close().await;
 }
