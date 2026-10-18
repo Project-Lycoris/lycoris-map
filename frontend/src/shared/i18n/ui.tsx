@@ -228,6 +228,7 @@ export const uiMessages = {
     'Enter a valid email address.': '请输入有效的邮箱地址。',
     'Enter the six-digit verification code.': '请输入 6 位数字验证码。',
     'Too many incorrect codes. Try again in one hour.': '验证码错误次数达到 5 次，已冷却 1 小时。',
+    'Too many sign-in attempts. Try again later.': '登录尝试次数过多，请稍后再试。',
     'Please wait before requesting another code.': '请求过于频繁，请稍后重新获取验证码。',
     'Email verification is temporarily unavailable. Try again later.':
         '邮箱验证暂时不可用，请稍后重试。',
@@ -310,10 +311,17 @@ export function localize(
     values?: Record<string, string | number>,
 ): string {
     const prefix = 'The place step is saved. Photo upload paused: '
-    if (text.startsWith(prefix))
-        return localize(language, 'The place step is saved. Photo upload paused: {error}', {
-            error: localize(language, text.slice(prefix.length)),
-        })
+    if (text.startsWith(prefix)) {
+        // The template key itself starts with the same prefix, so it must be
+        // looked up directly here: feeding it back into `localize()` would
+        // re-enter this branch and recurse until the stack overflows.
+        const key = 'The place step is saved. Photo upload paused: {error}'
+        const template = language === 'zh' && Object.hasOwn(uiMessages, key) ? uiMessages[key] : key
+        const error = localize(language, text.slice(prefix.length))
+        return template.replace(/\{(\w+)\}/g, (token, name: string) =>
+            name === 'error' ? error : token,
+        )
+    }
     const template =
         language === 'zh' && Object.hasOwn(uiMessages, text) ? uiMessages[text as UiKey] : text
     return template.replace(/\{(\w+)\}/g, (token, name: string) =>

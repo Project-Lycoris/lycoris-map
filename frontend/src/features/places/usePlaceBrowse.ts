@@ -27,6 +27,19 @@ function useDebounced<T>(value: T, delay: number): T {
     }, [value, delay])
     return settled
 }
+/** True once `active` has stayed true for `delay`; resets as soon as it clears. */
+function useSlowPending(active: boolean, delay = 3000): boolean {
+    const [slow, setSlow] = useState(false)
+    useEffect(() => {
+        if (!active) {
+            setSlow(false)
+            return
+        }
+        const timer = setTimeout(() => setSlow(true), delay)
+        return () => clearTimeout(timer)
+    }, [active, delay])
+    return slow
+}
 const retry = (count: number, error: Error) =>
     count < 1 && (!(error instanceof ApiError) || error.status === 0 || error.status >= 500)
 const readOptions = {
@@ -40,6 +53,7 @@ export type PlaceReadState = {
     error: string | null
     retry: () => void
     retryable?: boolean
+    loading?: boolean
 }
 
 export type PlaceReads = Pick<
@@ -241,15 +255,26 @@ export function usePlaceBrowse(
         return allResults.filter((marker) => ids.has(marker.id))
     }, [allResults, clusterIds])
     const mode = clusterIds ? 'cluster' : term ? 'search' : nearby ? 'nearby' : 'map'
+    // React Query keeps the query pending while it waits to retry after the
+    // first failure, so `error` is still null. Surface `failureReason` early so
+    // a timed-out read shows the actionable notice (with `Try again`) at ~30s
+    // instead of a silently empty map for up to ~60s.
+    const retrying = activeQuery.failureCount > 0 && activeQuery.isPending
+    const readFailure = readError(retrying ? activeQuery.failureReason : activeQuery.error)
+    // A slow read with nothing already on screen needs a progress hint; once a
+    // result or an error arrives it is gone.
+    const slowPending = useSlowPending(activeQuery.isFetching)
+    const loading = !debouncing && slowPending && allResults.length === 0 && !readFailure
     const state: PlaceReadState = {
         pending: debouncing || activeQuery.isPending,
-        error: debouncing ? null : readError(activeQuery.error),
+        error: debouncing ? null : readFailure,
         retry: () => {
             void activeQuery.refetch()
         },
+        loading,
     }
     const detailState: PlaceReadState = {
-        retryable: id !== null,
+        retryable: id !== null && !unavailable,
         pending: id !== null && detailQuery.isPending,
         error:
             rawMarkerId !== null && id === null
