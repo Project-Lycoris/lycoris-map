@@ -1342,6 +1342,14 @@ async fn register_rate_limit_and_redis_failure() {
     let third = register(&env, "limited-c", "limited-c@example.com").await;
     assert_eq!(third.status, StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(third.json()["code"], 429);
+    assert!(
+        third.json()["data"]["retryAfterSeconds"].as_i64().unwrap() >= 1,
+        "注册限流应返回剩余秒数"
+    );
+    assert!(
+        third.headers.get(header::RETRY_AFTER).is_some(),
+        "注册限流应带 Retry-After"
+    );
 
     // Redis 不可用时限流返回 503，绝不无上限放行。
     let broken = env.router_with_redis(unreachable_redis());
@@ -1434,6 +1442,167 @@ async fn trusted_proxy_forwarded_ip_partitions_rate_limit() {
         )
         .await;
     assert_eq!(b.status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn login_rate_limit_blocks_after_failures_with_retry_after() {
+    let env = TestEnv::new().await;
+    assert_eq!(
+        register(&env, "alice", "alice@example.com").await.status,
+        StatusCode::OK
+    );
+
+    // 默认每“IP+账号”10 次失败上限：连续 10 次错误密码都返回通用 401。
+    for attempt in 0..10 {
+        let failed = login(&env, "alice", "wrong-password").await;
+        assert_eq!(
+            failed.status,
+            StatusCode::UNAUTHORIZED,
+            "第 {attempt} 次失败"
+        );
+        assert_eq!(failed.json()["code"], 4001);
+    }
+
+    // 第 11 次即使密码正确也必须 429，带 code 42933 与 Retry-After。
+    let limited = login(&env, "alice", "test-password").await;
+    assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(limited.json()["code"], 42933);
+    assert!(
+        limited.json()["data"]["retryAfterSeconds"]
+            .as_i64()
+            .unwrap()
+            >= 1,
+        "应返回剩余秒数"
+    );
+    assert!(
+        limited.headers.get(header::RETRY_AFTER).is_some(),
+        "应带 Retry-After 头"
+    );
+}
+
+#[tokio::test]
+async fn login_rate_limit_normalizes_account_identity() {
+    let env = TestEnv::new().await;
+    assert_eq!(
+        register(&env, "bob", "bob@example.com").await.status,
+        StatusCode::OK
+    );
+
+    // 同一账号的大小写/首尾空格变体共用同一计数器（用户名与邮箱同口径）。
+    let variants = [
+        "BOB@example.com",
+        " bob@EXAMPLE.com ",
+        "Bob@Example.com",
+        "bob@example.com",
+    ];
+    for attempt in 0..10 {
+        let identity = variants[attempt % variants.len()];
+        let failed = login(&env, identity, "wrong-password").await;
+        assert_eq!(
+            failed.status,
+            StatusCode::UNAUTHORIZED,
+            "第 {attempt} 次变体 {identity:?}"
+        );
+    }
+
+    let limited = login(&env, "  bob@example.com  ", "test-password").await;
+    assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(limited.json()["code"], 42933);
+}
+
+#[tokio::test]
+async fn successful_login_clears_account_failure_count() {
+    let env = TestEnv::new().await;
+    assert_eq!(
+        register(&env, "carol", "carol@example.com").await.status,
+        StatusCode::OK
+    );
+
+    for attempt in 0..9 {
+        let failed = login(&env, "carol", "wrong-password").await;
+        assert_eq!(
+            failed.status,
+            StatusCode::UNAUTHORIZED,
+            "第 {attempt} 次失败"
+        );
+    }
+
+    // 成功登录清除该账号计数。
+    let ok = login(&env, "carol", "test-password").await;
+    assert_eq!(ok.status, StatusCode::OK);
+    assert!(ok.session_cookie().is_some());
+
+    // 清除后再失败一次不应立即触发账号上限；IP 计数（9+1=10）仍未达 30。
+    let failed = login(&env, "carol", "wrong-password").await;
+    assert_eq!(failed.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(failed.json()["code"], 4001);
+}
+
+#[tokio::test]
+async fn login_rate_limit_rejects_concurrent_burst() {
+    let env = TestEnv::new().await;
+    assert_eq!(
+        register(&env, "burst", "burst@example.com").await.status,
+        StatusCode::OK
+    );
+
+    // 25 个错误密码并发到达：原子预占保证只有上限内（默认账号 10）的尝试拿到名额。
+    let requests = (0..25).map(|_| {
+        send_with(
+            &env.router,
+            TestRequest::json(
+                Method::POST,
+                "/api/login",
+                serde_json::json!({ "username": "burst", "password": "wrong-password" }),
+            ),
+        )
+    });
+    let responses = futures_util::future::join_all(requests).await;
+
+    let unauthorized = responses
+        .iter()
+        .filter(|response| response.status == StatusCode::UNAUTHORIZED)
+        .count();
+    let limited = responses
+        .iter()
+        .filter(|response| response.status == StatusCode::TOO_MANY_REQUESTS)
+        .count();
+    assert_eq!(responses.len(), 25);
+    assert!(
+        unauthorized <= 10,
+        "并发突发最多只能放行账号上限内的尝试，实际 401={unauthorized}"
+    );
+    assert_eq!(
+        unauthorized + limited,
+        25,
+        "其余并发请求必须返回 429（401={unauthorized}, 429={limited}）"
+    );
+}
+
+#[tokio::test]
+async fn login_rate_limit_blocks_by_ip_across_accounts() {
+    let env = TestEnv::new().await;
+    assert_eq!(
+        register(&env, "dave", "dave@example.com").await.status,
+        StatusCode::OK
+    );
+
+    // 同一 IP 对 30 个不同账号各失败一次，累计到每 IP 上限 30。
+    for attempt in 0..30 {
+        let identity = format!("ghost-{attempt}@example.com");
+        let failed = login(&env, &identity, "wrong-password").await;
+        assert_eq!(
+            failed.status,
+            StatusCode::UNAUTHORIZED,
+            "第 {attempt} 次失败"
+        );
+    }
+
+    // 任意账号（即使密码正确、账号计数为 0）都被 IP 计数拦截。
+    let limited = login(&env, "dave", "test-password").await;
+    assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(limited.json()["code"], 42933);
+    assert!(limited.headers.get(header::RETRY_AFTER).is_some());
 }
 
 #[tokio::test]

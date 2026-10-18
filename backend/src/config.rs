@@ -54,6 +54,12 @@ pub const DEFAULT_SESSION_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60)
 /// 注册限流默认 5 次 / 600 秒。
 pub const DEFAULT_REGISTER_RATE_LIMIT_MAX: u32 = 5;
 pub const DEFAULT_REGISTER_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(600);
+/// 登录限流默认：每个“IP+账号”10 次失败 / 900 秒。
+pub const DEFAULT_LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT: u32 = 10;
+/// 登录限流默认：每个客户端 IP 30 次失败 / 900 秒。
+pub const DEFAULT_LOGIN_RATE_LIMIT_MAX_PER_IP: u32 = 30;
+/// 登录限流默认时间窗口 900 秒（两个计数器共用）。
+pub const DEFAULT_LOGIN_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(900);
 /// BCrypt 默认工作因子，对齐 Java `BCryptPasswordEncoder` 默认值 10。
 pub const DEFAULT_BCRYPT_COST: u32 = 10;
 /// 管理员重置用户密码时的默认值（与 Java `admin.default-user-password` 一致）。
@@ -126,6 +132,13 @@ pub struct Config {
     pub trusted_proxies: Vec<IpAddr>,
     pub register_rate_limit_max: u32,
     pub register_rate_limit_window: Duration,
+    // —— 阶段 2：登录限流 ——
+    /// 每个“客户端 IP + 规范化账号”允许的失败登录次数。
+    pub login_rate_limit_max_per_account: u32,
+    /// 每个客户端 IP 允许的失败登录次数（跨账号累计）。
+    pub login_rate_limit_max_per_ip: u32,
+    /// 登录失败计数窗口（两个计数器共用）。
+    pub login_rate_limit_window: Duration,
     // —— 阶段 2：密码与管理员 ——
     pub bcrypt_cost: u32,
     pub admin_default_user_password: String,
@@ -179,6 +192,9 @@ impl Config {
             trusted_proxies: Vec::new(),
             register_rate_limit_max: DEFAULT_REGISTER_RATE_LIMIT_MAX,
             register_rate_limit_window: DEFAULT_REGISTER_RATE_LIMIT_WINDOW,
+            login_rate_limit_max_per_account: DEFAULT_LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT,
+            login_rate_limit_max_per_ip: DEFAULT_LOGIN_RATE_LIMIT_MAX_PER_IP,
+            login_rate_limit_window: DEFAULT_LOGIN_RATE_LIMIT_WINDOW,
             bcrypt_cost: DEFAULT_BCRYPT_COST,
             admin_default_user_password: DEFAULT_ADMIN_USER_PASSWORD.to_string(),
         }
@@ -303,6 +319,21 @@ impl Config {
                 parse_or("REGISTER_RATE_LIMIT_MAX", DEFAULT_REGISTER_RATE_LIMIT_MAX)?,
             )?,
             register_rate_limit_window: seconds("REGISTER_RATE_LIMIT_WINDOW_SECONDS", 600)?,
+            login_rate_limit_max_per_account: non_zero(
+                "LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT",
+                parse_or(
+                    "LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT",
+                    DEFAULT_LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT,
+                )?,
+            )?,
+            login_rate_limit_max_per_ip: non_zero(
+                "LOGIN_RATE_LIMIT_MAX_PER_IP",
+                parse_or(
+                    "LOGIN_RATE_LIMIT_MAX_PER_IP",
+                    DEFAULT_LOGIN_RATE_LIMIT_MAX_PER_IP,
+                )?,
+            )?,
+            login_rate_limit_window: seconds("LOGIN_RATE_LIMIT_WINDOW_SECONDS", 900)?,
             password_max_concurrency: parse_password_max_concurrency("PASSWORD_MAX_CONCURRENCY")?,
             bcrypt_cost: non_zero("BCRYPT_COST", parse_or("BCRYPT_COST", DEFAULT_BCRYPT_COST)?)?,
             admin_default_user_password: optional("ADMIN_DEFAULT_USER_PASSWORD")

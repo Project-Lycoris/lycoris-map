@@ -32,7 +32,7 @@ use crate::modules::markers::service::MarkerService;
 use crate::modules::markers::write::MarkerWriteService;
 use crate::origin::enforce_write_origin;
 use crate::password::PasswordHasher;
-use crate::ratelimit::RegisterRateLimiter;
+use crate::ratelimit::{LoginRateLimiter, RegisterRateLimiter};
 use crate::routes;
 use crate::session::SessionStore;
 
@@ -58,6 +58,8 @@ pub struct AppState {
     pub session: SessionStore,
     pub passwords: PasswordHasher,
     pub rate_limiter: RegisterRateLimiter,
+    /// 登录失败限流（“IP+账号”与“IP”双计数）。
+    pub login_rate_limiter: LoginRateLimiter,
     /// 图片存储核心（头像/点位图片共用）。
     pub images: ImageStore,
     /// 媒体业务编排（头像、受控 `/uploads` 读取、点位图片提案）。
@@ -100,6 +102,14 @@ impl AppState {
             config.register_rate_limit_window,
             config.redis_command_timeout,
         );
+        let login_rate_limiter = LoginRateLimiter::new(
+            redis.clone(),
+            config.rate_limit_namespace.clone(),
+            config.login_rate_limit_max_per_account,
+            config.login_rate_limit_max_per_ip,
+            config.login_rate_limit_window,
+            config.redis_command_timeout,
+        );
         let images = ImageStore::new(&config.upload_dir, config.media_max_concurrency)?;
         let media = MediaService::new(db.clone(), images.clone(), marker_cache);
         Ok(Self {
@@ -112,6 +122,7 @@ impl AppState {
             session,
             passwords,
             rate_limiter,
+            login_rate_limiter,
             images,
             media,
         })
