@@ -1,4 +1,13 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import {
+    act,
+    cleanup,
+    configure,
+    fireEvent,
+    render,
+    screen,
+    waitFor,
+    within,
+} from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router'
 import { SessionProvider } from '@/features/auth/SessionProvider'
@@ -97,6 +106,10 @@ function mount(path = '/admin', language: 'en' | 'zh' = 'en') {
         </MemoryRouter>,
     )
 }
+
+// These route tests include lazy modules and real Leaflet rendering on shared CI workers.
+beforeAll(() => configure({ asyncUtilTimeout: 5000 }))
+afterAll(() => configure({ asyncUtilTimeout: 1000 }))
 
 beforeEach(() => {
     vi.spyOn(sessionApi, 'fetchMe').mockResolvedValue(user)
@@ -505,9 +518,11 @@ it('loads the whole queue in one list without pagination', async () => {
     )
     mount()
     await screen.findByRole('heading', { name: 'Queued 0' })
-    expect(screen.getAllByRole('button', { name: /Queued / })).toHaveLength(240)
+    const list = screen.getByRole('list', { name: 'Review queue' })
+    expect(within(list).getAllByRole('listitem', { hidden: true })).toHaveLength(240)
+    expect(within(list).getByText('Queued 239')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument()
-})
+}, 15000)
 
 it('suspends shortcuts while the reason form is open and restores them after', async () => {
     vi.mocked(api.readPendingMarkers).mockResolvedValue([

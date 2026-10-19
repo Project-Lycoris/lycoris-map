@@ -77,8 +77,8 @@ export function AllPlaces() {
         return () => window.clearTimeout(timer)
     }, [search, params, setParam])
 
-    // Jumping in from the audit log carries a marker id; prefill the search so
-    // the server-paged result contains it, without writing it into `q`.
+    // Audit-log links carry an id. Resolve that initial filter before fetching,
+    // so an unfiltered response cannot briefly replace the requested detail.
     const jumped = useRef(false)
     useEffect(() => {
         if (jumped.current) return
@@ -88,6 +88,7 @@ export function AllPlaces() {
     }, [params, setParam])
 
     const query = useQuery({
+        enabled: jumped.current || !params.get('markerId') || params.has('q'),
         queryKey: [
             ...work.prefix,
             'all-search',

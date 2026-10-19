@@ -1,4 +1,13 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import {
+    act,
+    cleanup,
+    configure,
+    fireEvent,
+    render,
+    screen,
+    waitFor,
+    within,
+} from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, useLocation } from 'react-router'
 import { SessionProvider } from '@/features/auth/SessionProvider'
@@ -92,6 +101,10 @@ function mount(path: string, language: 'en' | 'zh' = 'en') {
         </MemoryRouter>,
     )
 }
+
+// These route tests include lazy modules and real Leaflet rendering on shared CI workers.
+beforeAll(() => configure({ asyncUtilTimeout: 5000 }))
+afterAll(() => configure({ asyncUtilTimeout: 1000 }))
 
 beforeEach(() => {
     vi.spyOn(sessionApi, 'fetchMe').mockResolvedValue(user)
@@ -347,6 +360,9 @@ it('jumps from the audit log to a place search in all places', async () => {
     fireEvent.click(await screen.findByRole('button', { name: /erin/ }))
     await waitFor(() => expect(api.searchMarkers).toHaveBeenCalled())
     expect(screen.getByTestId('location')).toHaveTextContent('/admin/all?markerId=1')
+    expect(vi.mocked(api.searchMarkers).mock.calls.every(([filters]) => filters.q === '1')).toBe(
+        true,
+    )
 })
 
 it('keeps the current page when using pagination', async () => {
