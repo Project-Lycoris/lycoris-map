@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT coalesce(public_id, '')::text AS public_id,\n       coalesce(count(*) FILTER (WHERE status = 'APPROVED'), 0)::bigint AS approved,\n       coalesce(count(*) FILTER (WHERE status = 'REJECTED'), 0)::bigint AS rejected,\n       coalesce(count(*) FILTER (WHERE status = 'PENDING'), 0)::bigint AS pending\nFROM (\n    SELECT user_public_id AS public_id, review_status AS status\n    FROM map_markers\n    WHERE user_public_id = ANY($1)\n    UNION ALL\n    SELECT proposer_public_id, status\n    FROM marker_edit_proposals\n    WHERE proposer_public_id = ANY($1)\n    UNION ALL\n    SELECT proposer_public_id, status\n    FROM marker_image_proposals\n    WHERE proposer_public_id = ANY($1)\n) submissions\nWHERE public_id IS NOT NULL\nGROUP BY public_id\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "public_id",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "approved",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "rejected",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "pending",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "d7b51b75a322926d478b1ecf563a38c2bf0413bec8632c4a9541ceb2ff1e6d5f"
+}

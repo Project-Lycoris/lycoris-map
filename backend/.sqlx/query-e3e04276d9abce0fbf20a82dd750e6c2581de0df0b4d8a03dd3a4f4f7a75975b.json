@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT count(*)\nFROM moderation_events\nWHERE ($1::bigint IS NULL OR marker_id = $1)\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "e3e04276d9abce0fbf20a82dd750e6c2581de0df0b4d8a03dd3a4f4f7a75975b"
+}

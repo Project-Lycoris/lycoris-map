@@ -11,6 +11,7 @@ use serde_json::json;
 use crate::app::AppState;
 use crate::auth::AdminUser;
 use crate::dto::admin_user_item;
+use crate::modules::markers::moderation::record_event;
 use crate::users;
 use crate::web;
 
@@ -63,7 +64,7 @@ pub async fn list_users(
 /// POST /api/admin/users/{id}/reset-password
 pub async fn reset_password(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    admin: AdminUser,
     Path(id): Path<i32>,
 ) -> Response {
     let user = match users::find_any_by_id(&state.db, id).await {
@@ -84,11 +85,34 @@ pub async fn reset_password(
         Err(_) => return web::unavailable(),
     };
 
-    match users::reset_password(&state.db, id, user.row_version, &hash).await {
-        Ok(Some(_)) => web::json(
-            StatusCode::OK,
-            json!({ "message": "密码已重置为默认密码", "username": user.username }),
-        ),
+    let mut tx = match state.db.begin().await {
+        Ok(tx) => tx,
+        Err(_) => return web::unavailable(),
+    };
+    match users::reset_password(&mut *tx, id, user.row_version, &hash).await {
+        Ok(Some(_)) => {
+            let actor = &admin.0.user;
+            if record_event(
+                &mut tx,
+                &actor.public_id.to_string(),
+                actor.username_or_empty(),
+                "user_reset_password",
+                "user",
+                i64::from(id),
+                None,
+                None,
+            )
+            .await
+            .is_err()
+                || tx.commit().await.is_err()
+            {
+                return web::unavailable();
+            }
+            web::json(
+                StatusCode::OK,
+                json!({ "message": "密码已重置为默认密码", "username": user.username }),
+            )
+        }
         Ok(None) => optimistic_conflict(),
         Err(_) => web::unavailable(),
     }
@@ -112,8 +136,31 @@ pub async fn delete_user(
         return web::text(StatusCode::NOT_FOUND, "用户不存在");
     }
 
-    match users::soft_delete(&state.db, id, user.row_version).await {
-        Ok(true) => web::json(StatusCode::OK, json!({ "message": "用户已删除" })),
+    let mut tx = match state.db.begin().await {
+        Ok(tx) => tx,
+        Err(_) => return web::unavailable(),
+    };
+    match users::soft_delete(&mut *tx, id, user.row_version).await {
+        Ok(true) => {
+            let actor = &admin.0.user;
+            if record_event(
+                &mut tx,
+                &actor.public_id.to_string(),
+                actor.username_or_empty(),
+                "user_disable",
+                "user",
+                i64::from(id),
+                None,
+                None,
+            )
+            .await
+            .is_err()
+                || tx.commit().await.is_err()
+            {
+                return web::unavailable();
+            }
+            web::json(StatusCode::OK, json!({ "message": "用户已删除" }))
+        }
         Ok(false) => optimistic_conflict(),
         Err(_) => web::unavailable(),
     }
@@ -122,7 +169,7 @@ pub async fn delete_user(
 /// POST /api/admin/users/{id}/restore
 pub async fn restore_user(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    admin: AdminUser,
     Path(id): Path<i32>,
 ) -> Response {
     let user = match users::find_any_by_id(&state.db, id).await {
@@ -134,8 +181,31 @@ pub async fn restore_user(
         return web::text(StatusCode::BAD_REQUEST, "该用户未被删除");
     }
 
-    match users::restore(&state.db, id, user.row_version).await {
-        Ok(true) => web::json(StatusCode::OK, json!({ "message": "用户已恢复" })),
+    let mut tx = match state.db.begin().await {
+        Ok(tx) => tx,
+        Err(_) => return web::unavailable(),
+    };
+    match users::restore(&mut *tx, id, user.row_version).await {
+        Ok(true) => {
+            let actor = &admin.0.user;
+            if record_event(
+                &mut tx,
+                &actor.public_id.to_string(),
+                actor.username_or_empty(),
+                "user_restore",
+                "user",
+                i64::from(id),
+                None,
+                None,
+            )
+            .await
+            .is_err()
+                || tx.commit().await.is_err()
+            {
+                return web::unavailable();
+            }
+            web::json(StatusCode::OK, json!({ "message": "用户已恢复" }))
+        }
         Ok(false) => optimistic_conflict(),
         Err(_) => web::unavailable(),
     }

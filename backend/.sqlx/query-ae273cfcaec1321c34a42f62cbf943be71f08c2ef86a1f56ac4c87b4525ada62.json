@@ -1,0 +1,100 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.id,\n       p.marker_id,\n       p.marker_title,\n       p.status,\n       p.review_note,\n       p.created_at,\n       p.reviewed_at\nFROM marker_edit_proposals p\nJOIN map_markers m ON m.id = p.marker_id\nWHERE p.proposer_public_id = $1 AND m.deactivated = false\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "marker_edit_proposals",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "marker_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "marker_edit_proposals",
+            "name": "marker_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "marker_title",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "marker_edit_proposals",
+            "name": "marker_title"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "status",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "marker_edit_proposals",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "review_note",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "marker_edit_proposals",
+            "name": "review_note"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "marker_edit_proposals",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "reviewed_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "marker_edit_proposals",
+            "name": "reviewed_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "ae273cfcaec1321c34a42f62cbf943be71f08c2ef86a1f56ac4c87b4525ada62"
+}

@@ -19,6 +19,7 @@ use crate::error::ErrorShape;
 use crate::modules::markers::http::json_marker;
 use crate::modules::markers::localization;
 use crate::modules::markers::model::Viewer;
+use crate::modules::markers::write_http::{OptionalMarkerJsonBody, RejectBody};
 use crate::multipart::media_error_response;
 use crate::web;
 
@@ -76,7 +77,9 @@ pub async fn reject_image_proposal(
     State(state): State<AppState>,
     admin: AdminUser,
     Path(id): Path<i64>,
+    body: OptionalMarkerJsonBody<RejectBody>,
 ) -> Response {
+    let reason = body.0.and_then(|body| body.reason);
     let admin = admin.0;
     let public_id = admin.user.public_id.to_string();
     let viewer = viewer_of(&public_id, &admin);
@@ -84,7 +87,7 @@ pub async fn reject_image_proposal(
 
     match state
         .media
-        .reject_image_proposal(id, &viewer, reviewer)
+        .reject_image_proposal_with_reason(id, &viewer, reviewer, reason.as_deref())
         .await
     {
         Ok(()) => web::empty(StatusCode::OK),
