@@ -62,4 +62,4 @@ Cloudflare Pages builds `frontend/` and publishes `dist/` with its Worker. The R
 
 Before releasing metadata/album support, back up PostgreSQL and uploads, explicitly apply migrations `0009`–`0011` (and any earlier pending migration), and deploy the backend before clients. The park reclassification uses exact ID, title, and version guards; changed records are left for manual review.
 
-See the [backend](backend/README.md), [Web](frontend/README.md), [iOS](apps/ios/README.md), and [Android](apps/android/README.md) guides for commands. Deployment details live with the [backend configuration](backend/deploy/production/README.md) and [Pages Worker](frontend/deploy/cloudflare/README.md).
+See the [backend](backend/README.md), [Web](frontend/README.md), [iOS](apps/ios/README.md), and [Android](apps/android/README.md) guides for commands. Deployment details live with the [Shanghai backend configuration](backend/deploy/shanghai/README.md) and [Pages Worker](frontend/deploy/cloudflare/README.md).
