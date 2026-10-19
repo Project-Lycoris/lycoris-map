@@ -1,0 +1,59 @@
+.my-submissions {
+    margin-top: 16px;
+}
+.my-submissions h3 {
+    font-size: 18px;
+    margin: 0 0 8px;
+}
+.my-submissions ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 8px;
+}
+.my-submissions li {
+    padding: 10px 12px;
+    border: 1px solid #e4dbea;
+    border-radius: 14px;
+    background: #fef7ff;
+}
+.submission-title {
+    margin: 0 0 4px;
+    overflow-wrap: anywhere;
+}
+.submission-kind {
+    color: #65558f;
+    font-weight: 600;
+}
+.submission-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin: 0;
+    color: #625b65;
+    font-size: 14px;
+}
+.submission-status {
+    padding: 1px 8px;
+    border-radius: 10px;
+    border: 1px solid #cbbbd8;
+    font-weight: 600;
+}
+.submission-approved {
+    background: #e8f5e0;
+    color: #23521f;
+}
+.submission-pending {
+    background: #fff4d8;
+    color: #6b4a00;
+}
+.submission-rejected {
+    background: #fde7ec;
+    color: #8a3b4a;
+}
+.submission-note {
+    margin: 4px 0 0;
+    color: #8a3b4a;
+}
