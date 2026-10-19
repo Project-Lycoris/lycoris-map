@@ -10,17 +10,25 @@ export type QueueEntry = {
     items: ReviewItem[]
     decision: 'approve' | 'reject'
     reason: string | undefined
+    skipped: number
+    batch: boolean
     deadline: number
     status: 'pending' | 'sending' | 'failed' | 'done'
     error: string | undefined
-    summary: { ok: number; failed: number; failures: string[] } | undefined
+    summary: { ok: number; failed: number; failures: string[]; skipped: number } | undefined
 }
 
 export type ScheduleInput = {
     items: ReviewItem[]
     decision: 'approve' | 'reject'
     reason?: string | undefined
+    /** Out-of-date proposals that were skipped before submission. */
+    skipped?: number | undefined
+    /** Keep the batch endpoint even when only one item remains. */
+    batch?: boolean | undefined
 }
+
+export type QueueSummary = { ok: number; failed: number; failures: string[]; skipped: number }
 
 const plural: Record<ReviewItem['kind'], 'markers' | 'edits' | 'images'> = {
     marker: 'markers',
@@ -67,7 +75,7 @@ function batchBody(entry: QueueEntry) {
  */
 export function sendKeepalive(requests: QueueEntry[], language: Language) {
     for (const entry of requests) {
-        if (entry.items.length === 1) {
+        if (entry.items.length === 1 && !entry.batch) {
             const body = singleBody(entry)
             void fetch(singlePath(entry, language), {
                 method: 'POST',
@@ -140,7 +148,7 @@ export function useUndoQueue({
                 bump()
                 onRestore(entry.items)
             }
-            if (entry.items.length === 1) {
+            if (entry.items.length === 1 && !entry.batch) {
                 const item = entry.items[0]!
                 try {
                     await runRef.current(
@@ -212,7 +220,12 @@ export function useUndoQueue({
                     failedItems.push(...chunk.filter((item) => failedKeys.has(item.key)))
                 }
                 entry.status = 'done'
-                entry.summary = { ok: okItems.length, failed: failedItems.length, failures }
+                entry.summary = {
+                    ok: okItems.length,
+                    failed: failedItems.length,
+                    failures,
+                    skipped: entry.skipped,
+                }
                 bump()
                 if (okItems.length) onCommit(okItems)
                 if (failedItems.length) onRestore(failedItems)
@@ -233,6 +246,8 @@ export function useUndoQueue({
                 items: input.items,
                 decision: input.decision,
                 reason: input.reason,
+                skipped: input.skipped ?? 0,
+                batch: input.batch ?? false,
                 deadline: Date.now() + 5000,
                 status: 'pending',
                 error: undefined,
@@ -288,10 +303,33 @@ export function useUndoQueue({
         }
     }, [flush])
 
+    const report = useCallback(
+        (summary: QueueSummary) => {
+            entries.current = [
+                ...entries.current,
+                {
+                    id: `op-${++counter.current}`,
+                    items: [],
+                    decision: 'reject',
+                    reason: undefined,
+                    skipped: summary.skipped,
+                    batch: false,
+                    deadline: Date.now(),
+                    status: 'done',
+                    error: undefined,
+                    summary,
+                },
+            ]
+            bump()
+        },
+        [bump],
+    )
+
     return {
         entries: entries.current,
         version,
         schedule,
+        report,
         undo,
         undoLatest,
         dismiss: drop,

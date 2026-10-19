@@ -81,12 +81,12 @@ function imageProposal(overrides: Partial<api.ImageProposal> = {}): api.ImagePro
 
 let client: QueryClient
 
-function mount(path = '/admin') {
+function mount(path = '/admin', language: 'en' | 'zh' = 'en') {
     client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
     return render(
         <MemoryRouter initialEntries={[path]}>
             <QueryClientProvider client={client}>
-                <LanguageProvider initialPreference="en">
+                <LanguageProvider initialPreference={language}>
                     <SessionProvider>
                         <AccountFlowProvider>
                             <AdminPage />
@@ -113,6 +113,13 @@ beforeEach(() => {
     vi.spyOn(api, 'readImages').mockResolvedValue([])
     vi.spyOn(api, 'moderate').mockResolvedValue(undefined)
     vi.spyOn(api, 'batchModerate').mockResolvedValue({ results: [] })
+    vi.spyOn(api, 'readModerationEvents').mockResolvedValue({
+        page: 0,
+        size: 20,
+        totalPages: 1,
+        totalElements: 0,
+        items: [],
+    })
     vi.spyOn(privatePlaces, 'readAccountPlace').mockResolvedValue(
         syntheticPlace({ id: 9, title: 'Current place title' }),
     )
@@ -435,4 +442,123 @@ it('suspends shortcuts while the reason form is open and restores them after', a
     )
     fireEvent.keyDown(window, { key: 'j' })
     await screen.findByRole('heading', { name: 'Two' })
+})
+
+it('flags a stale edit proposal, shows the current title, and blocks approve/modify', async () => {
+    vi.mocked(api.readPendingMarkers).mockResolvedValue([])
+    vi.mocked(api.readEdits).mockResolvedValue([editProposal({ baseMarkerVersion: 1 })])
+    vi.mocked(privatePlaces.readAccountPlace).mockResolvedValue(
+        syntheticPlace({ id: 9, title: 'Fresh title', version: 2 }),
+    )
+    mount('/admin?item=edit-40')
+    await screen.findByRole('heading', { name: 'Fresh title' })
+    expect(screen.queryByRole('heading', { name: 'Proposed title' })).not.toBeInTheDocument()
+    await screen.findByText(
+        'This place changed after the proposal was submitted. The proposal is out of date and can only be rejected.',
+    )
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled())
+    expect(screen.getByRole('button', { name: 'Modify and approve' })).toBeDisabled()
+    expect(screen.getAllByText('Out of date').length).toBeGreaterThan(0)
+    fireEvent.keyDown(window, { key: 'a' })
+    fireEvent.keyDown(window, { key: 'e' })
+    expect(screen.getByRole('heading', { name: 'Fresh title' })).toBeInTheDocument()
+    expect(api.moderate).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }))
+    expect(screen.getByRole('button', { name: /Proposal is out of date/ })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+    )
+})
+
+it('does not flag proposals when the base version matches or is unknown', async () => {
+    vi.mocked(api.readPendingMarkers).mockResolvedValue([])
+    vi.mocked(api.readEdits).mockResolvedValue([
+        editProposal({ id: 40, markerId: 9, baseMarkerVersion: 2 }),
+        editProposal({
+            id: 41,
+            markerId: 10,
+            markerTitle: 'Legacy proposal',
+            baseMarkerVersion: null,
+        }),
+    ])
+    vi.mocked(privatePlaces.readAccountPlace).mockImplementation(async (value) =>
+        syntheticPlace({ id: Number(value), title: `Place ${value}`, version: 2 }),
+    )
+    mount('/admin?item=edit-40')
+    await screen.findByRole('heading', { name: 'Place 9' })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled())
+    expect(screen.queryByText('Out of date')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Legacy proposal/ }))
+    await screen.findByRole('heading', { name: 'Place 10' })
+    expect(screen.queryByText('Out of date')).not.toBeInTheDocument()
+})
+
+it('skips out-of-date proposals during a bulk approval and reports how many', async () => {
+    vi.mocked(api.readPendingMarkers).mockResolvedValue([])
+    const stale = editProposal({
+        id: 40,
+        markerId: 9,
+        markerTitle: 'Stale place',
+        baseMarkerVersion: 1,
+        createdAt: '2026-10-18T06:00:00Z',
+    })
+    const fresh = editProposal({
+        id: 41,
+        markerId: 10,
+        markerTitle: 'Fresh place',
+        baseMarkerVersion: 2,
+        createdAt: '2026-10-18T07:00:00Z',
+    })
+    vi.mocked(api.readEdits).mockResolvedValue([stale, fresh])
+    vi.mocked(privatePlaces.readAccountPlace).mockImplementation(async (value) =>
+        syntheticPlace({ id: Number(value), title: `Place ${value}`, version: 2 }),
+    )
+    vi.mocked(api.batchModerate).mockResolvedValue({
+        results: [{ kind: 'edit', id: 41, ok: true }],
+    })
+    mount()
+    await screen.findByRole('heading', { name: 'Place 9' })
+    await waitFor(() => expect(screen.getAllByText('Out of date')).toHaveLength(1))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Stale place' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Fresh place' }))
+    const bulk = screen.getByRole('region', { name: 'Bulk actions' })
+    vi.useFakeTimers()
+    fireEvent.click(within(bulk).getByRole('button', { name: 'Approve' }))
+    await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+    })
+    expect(api.batchModerate).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(api.batchModerate).mock.calls[0]![0]).toEqual([
+        { kind: 'edit', id: 41, decision: 'approve' },
+    ])
+    expect(screen.getByText(/Skipped 1/)).toBeInTheDocument()
+})
+
+it('translates stored shortcut reasons in the moderation timeline', async () => {
+    vi.mocked(api.readPendingMarkers).mockResolvedValue([])
+    vi.mocked(api.readEdits).mockResolvedValue([editProposal()])
+    vi.mocked(api.readModerationEvents).mockResolvedValue({
+        page: 0,
+        size: 20,
+        totalPages: 1,
+        totalElements: 1,
+        items: [
+            {
+                id: 1,
+                createdAt: '2026-10-18T06:50:15Z',
+                actorUsername: 'erin',
+                actorPublicId: 'E',
+                action: 'reject',
+                targetKind: 'edit',
+                targetId: 40,
+                markerId: 9,
+                markerTitle: 'Current place title',
+                targetLabel: null,
+                note: 'Information is inaccurate · typo',
+            },
+        ],
+    })
+    mount('/admin?item=edit-40', 'zh')
+    const timeline = await screen.findByRole('region', { name: '审核记录' })
+    expect(await within(timeline).findByText('信息不准确 · typo')).toBeInTheDocument()
 })

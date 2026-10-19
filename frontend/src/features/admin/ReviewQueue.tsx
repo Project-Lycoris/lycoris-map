@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router'
 import { CategoryBadge, DesignButton } from '@/shared/ui/design-primitives'
 import { categoryBadges, categoryLabels, publicImageUrl } from '@/features/places/model'
+import { readAccountPlace } from '@/shared/api/privatePlaces'
 import type { MarkerText } from '@/shared/api/markerWrites'
 import { useAdminUi } from './ui'
 import { useAdminWork } from './work'
@@ -70,6 +71,28 @@ export function ReviewQueue() {
     })
 
     const all = useMemo(() => query.data ?? [], [query.data])
+    const editBaselines = useMemo(
+        () =>
+            all.filter(
+                (item): item is Extract<ReviewItem, { kind: 'edit' }> =>
+                    item.kind === 'edit' && item.edit.baseMarkerVersion != null,
+            ),
+        [all],
+    )
+    const baselineQueries = useQueries({
+        queries: editBaselines.map((item) => ({
+            queryKey: [...work.prefix, 'current', item.markerId, 'zh'],
+            gcTime: 0,
+            retry: false,
+            queryFn: ({ signal }: { signal: AbortSignal }) =>
+                work.run((s) => readAccountPlace(String(item.markerId), 'zh', s), signal),
+        })),
+    })
+    const staleKeys = new Set<string>()
+    editBaselines.forEach((item, index) => {
+        const version = baselineQueries[index]?.data?.version
+        if (version != null && version !== item.edit.baseMarkerVersion) staleKeys.add(item.key)
+    })
     const queue = useMemo(() => all.filter((item) => !removed.has(item.key)), [all, removed])
     const counts = useMemo(() => {
         const searched = queue.filter((item) => itemMatches(item, search))
@@ -170,6 +193,7 @@ export function ReviewQueue() {
     }
 
     const approve = (item: ReviewItem) => {
+        if (staleKeys.has(item.key)) return
         removeAndSelectNext([item])
         undo.schedule({ items: [item], decision: 'approve' })
     }
@@ -194,8 +218,18 @@ export function ReviewQueue() {
     const selectedItems = filtered.filter((item) => checked.has(item.key))
     const bulk = (decision: 'approve' | 'reject', reason?: string) => {
         if (!selectedItems.length) return
-        removeAndSelectNext(selectedItems)
-        undo.schedule({ items: selectedItems, decision, reason })
+        const items =
+            decision === 'approve'
+                ? selectedItems.filter((item) => !staleKeys.has(item.key))
+                : selectedItems
+        const skipped = selectedItems.length - items.length
+        if (items.length) {
+            removeAndSelectNext(items)
+            undo.schedule({ items, decision, reason, skipped, batch: true })
+        } else if (skipped) {
+            undo.report({ ok: 0, failed: 0, failures: [], skipped })
+        }
+        setChecked(new Set())
         setBatchReject(false)
         setBatchReason('')
     }
@@ -251,14 +285,8 @@ export function ReviewQueue() {
             }
             if (!selectedItem) return
             if (key === 'a' || key === 'A') {
-                if (
-                    selectedItem.kind === 'image' ||
-                    selectedItem.kind === 'marker' ||
-                    selectedItem.kind === 'edit'
-                ) {
-                    event.preventDefault()
-                    approve(selectedItem)
-                }
+                event.preventDefault()
+                if (!staleKeys.has(selectedItem.key)) approve(selectedItem)
                 return
             }
             if (key === 'r' || key === 'R') {
@@ -267,7 +295,7 @@ export function ReviewQueue() {
                 return
             }
             if (key === 'e' || key === 'E') {
-                if (selectedItem.kind === 'image') return
+                if (selectedItem.kind === 'image' || staleKeys.has(selectedItem.key)) return
                 event.preventDefault()
                 setEditRequest((value) => value + 1)
                 return
@@ -523,6 +551,11 @@ export function ReviewQueue() {
                                                     {relativeTime(item.createdAt, ui.language)}
                                                 </time>
                                             </span>
+                                            {staleKeys.has(item.key) && (
+                                                <span className="stale-badge">
+                                                    {ui.message('Out of date')}
+                                                </span>
+                                            )}
                                         </span>
                                     </button>
                                 </li>

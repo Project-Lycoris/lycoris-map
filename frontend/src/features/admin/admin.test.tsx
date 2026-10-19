@@ -178,5 +178,5 @@ it('loads only the selected edit baseline and keeps it actionable', async () => 
     await screen.findByRole('heading', { name: '中文原文二' })
     expect(read.mock.calls.filter(([id]) => id === '20')).toHaveLength(1)
     expect(read.mock.calls.filter(([id]) => id === '10')).toHaveLength(0)
-    expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled())
 })

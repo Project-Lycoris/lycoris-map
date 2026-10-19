@@ -18,6 +18,7 @@ import { markerItem } from './reviewModel'
 import { moderationError, useUndoQueue } from './undoQueue'
 import { UndoNotifications } from './UndoNotifications'
 import { fullTime, relativeTime } from './time'
+import { localizedReason } from './reason'
 
 const categories = ['accessible_toilet', 'baby_room', 'friendly_clinic', 'self_definition'] as const
 const statusOptions = [
@@ -412,7 +413,8 @@ function AllPlaceDetail({
             <div className="review-detail-body">
                 {marker.reviewNote && (
                     <p className="review-note">
-                        {ui.message('Rejection reason')}: {marker.reviewNote}
+                        {ui.message('Rejection reason')}:{' '}
+                        {localizedReason(marker.reviewNote, ui.message)}
                     </p>
                 )}
                 <div className="review-tags">

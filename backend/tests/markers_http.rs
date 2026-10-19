@@ -63,7 +63,7 @@ const MARKER_KEYS: [&str; 29] = [
 ];
 
 /// `pending-edits` 的字段（含新增提交者统计）。
-const EDIT_PROPOSAL_KEYS: [&str; 22] = [
+const EDIT_PROPOSAL_KEYS: [&str; 23] = [
     "id",
     "markerId",
     "markerTitle",
@@ -84,6 +84,7 @@ const EDIT_PROPOSAL_KEYS: [&str; 22] = [
     "proposerPublicId",
     "proposerIsOwner",
     "status",
+    "baseMarkerVersion",
     "createdAt",
     "proposerSubmissionStats",
 ];

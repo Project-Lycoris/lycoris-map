@@ -1100,6 +1100,8 @@ async fn moderation_events_filter_paginate_and_record_user_operations() {
     assert_eq!(filtered["items"][0]["markerId"], first);
     assert_eq!(filtered["items"][0]["action"], "approve");
     assert_eq!(filtered["items"][0]["targetKind"], "marker");
+    assert_eq!(filtered["items"][0]["markerTitle"], "one");
+    assert!(filtered["items"][0]["targetLabel"].is_null());
 
     let paged = env
         .call(
@@ -1155,14 +1157,106 @@ async fn moderation_events_filter_paginate_and_record_user_operations() {
     for expected in ["user_disable", "user_restore", "user_reset_password"] {
         assert!(actions.contains(&expected), "缺少 {expected}: {actions:?}");
     }
+    let user_items: Vec<&Value> = all["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["targetKind"] == "user")
+        .collect();
+    assert!(!user_items.is_empty());
+    assert!(user_items.iter().all(|item| item["markerId"].is_null()));
+    assert!(user_items.iter().all(|item| item["markerTitle"].is_null()));
     assert!(
-        all["items"]
-            .as_array()
-            .unwrap()
+        user_items
             .iter()
-            .filter(|item| item["targetKind"] == "user")
-            .all(|item| item["markerId"].is_null())
+            .all(|item| item["targetLabel"] == "events-target")
     );
+}
+
+#[tokio::test]
+async fn pending_edits_expose_base_marker_version_for_stale_detection() {
+    let env = Env::new().await;
+    let (_admin_id, _, admin) = env.user("stale-admin", "ADMIN").await;
+    let (_owner_id, owner, _) = env.user("stale-owner", "USER").await;
+
+    let marker = seed_marker(
+        &env.pool,
+        "会过期的点位",
+        "APPROVED",
+        &owner,
+        "stale-owner",
+        "accessible_toilet",
+        false,
+    )
+    .await;
+    let proposal = seed_edit(
+        &env.pool,
+        marker,
+        "会过期的点位",
+        "过期提案",
+        &owner,
+        "stale-owner",
+        0,
+        "PENDING",
+    )
+    .await;
+    sqlx::query("UPDATE map_markers SET version = 5 WHERE id = $1")
+        .bind(marker)
+        .execute(&env.pool)
+        .await
+        .unwrap();
+
+    let items = env
+        .call(
+            Method::GET,
+            "/api/admin/markers/pending-edits",
+            Some(&admin),
+            None,
+        )
+        .await
+        .json();
+    let item = items
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == proposal)
+        .unwrap();
+    assert_eq!(item["baseMarkerVersion"], 0);
+    let current: i64 = sqlx::query_scalar("SELECT version FROM map_markers WHERE id = $1")
+        .bind(marker)
+        .fetch_one(&env.pool)
+        .await
+        .unwrap();
+    assert_eq!(current, 5);
+    assert_ne!(item["baseMarkerVersion"], current);
+}
+
+#[tokio::test]
+async fn admin_user_search_matches_numeric_id_and_escapes_wildcards() {
+    let env = Env::new().await;
+    let (_admin_id, _, admin) = env.user("user-search-admin", "ADMIN").await;
+    let (numeric_id, _numeric_public, _) = env.user("numeric-target", "USER").await;
+    let (_percent_id, _percent_public, _) = env.user("100%user", "USER").await;
+    let (_plain_id, _plain_public, _) = env.user("plain-user", "USER").await;
+
+    let by_id = env
+        .call(
+            Method::GET,
+            &format!("/api/admin/users?q={numeric_id}"),
+            Some(&admin),
+            None,
+        )
+        .await
+        .json();
+    assert_eq!(by_id["totalElements"], 1);
+    assert_eq!(by_id["items"][0]["id"], numeric_id);
+
+    let percent = env
+        .call(Method::GET, "/api/admin/users?q=%25", Some(&admin), None)
+        .await
+        .json();
+    assert_eq!(percent["totalElements"], 1, "百分号必须按字面量匹配");
+    assert_eq!(percent["items"][0]["username"], "100%user");
 }
 
 #[tokio::test]

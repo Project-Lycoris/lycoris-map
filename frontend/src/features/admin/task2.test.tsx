@@ -49,7 +49,9 @@ const events: api.ModerationEvent[] = [
         targetKind: 'edit',
         targetId: 4,
         markerId: 1,
-        note: 'fixed a typo',
+        markerTitle: 'Reviewed place',
+        targetLabel: null,
+        note: 'Information is inaccurate · fixed a typo',
     },
     {
         id: 4,
@@ -60,6 +62,8 @@ const events: api.ModerationEvent[] = [
         targetKind: 'user',
         targetId: 9,
         markerId: null,
+        markerTitle: null,
+        targetLabel: 'bob',
         note: null,
     },
 ]
@@ -71,12 +75,12 @@ function LocationProbe() {
     return <output data-testid="location">{location.pathname + location.search}</output>
 }
 
-function mount(path: string) {
+function mount(path: string, language: 'en' | 'zh' = 'en') {
     client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
     return render(
         <MemoryRouter initialEntries={[path]}>
             <QueryClientProvider client={client}>
-                <LanguageProvider initialPreference="en">
+                <LanguageProvider initialPreference={language}>
                     <SessionProvider>
                         <AccountFlowProvider>
                             <AdminPage />
@@ -205,7 +209,7 @@ it('renders the moderation timeline in the detail panel', async () => {
     const timeline = await screen.findByRole('region', { name: 'Moderation history' })
     expect(within(timeline).getByText(/erin/)).toBeInTheDocument()
     expect(within(timeline).getByText(/Approved with changes/)).toBeInTheDocument()
-    expect(within(timeline).getByText('fixed a typo')).toBeInTheDocument()
+    expect(within(timeline).getByText(/fixed a typo/)).toBeInTheDocument()
 })
 
 it('degrades the timeline and the all-places list when the routes are missing', async () => {
@@ -215,6 +219,22 @@ it('degrades the timeline and the all-places list when the routes are missing', 
     expect(
         await screen.findByText('Server update required to browse all places'),
     ).toBeInTheDocument()
+})
+
+it('renders readable event rows instead of raw target ids', async () => {
+    vi.mocked(api.readModerationEvents).mockResolvedValue({
+        page: 0,
+        size: 50,
+        totalPages: 1,
+        totalElements: 2,
+        items: events,
+    })
+    mount('/admin/log', 'zh')
+    await screen.findByText('内容修改 · Reviewed place')
+    expect(screen.getByText('账号 · bob')).toBeInTheDocument()
+    expect(screen.getByText('信息不准确 · fixed a typo')).toBeInTheDocument()
+    expect(screen.queryByText('edit #4')).not.toBeInTheDocument()
+    expect(screen.queryByText('user #9')).not.toBeInTheDocument()
 })
 
 it('paginates the audit log and links events to their target', async () => {
@@ -245,7 +265,7 @@ it('links user events to the user page search and tolerates a missing log route'
     })
     mount('/admin/log')
     fireEvent.click(await screen.findByRole('button', { name: /erin/ }))
-    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/admin/usr?q=E'))
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/admin/usr?q=9'))
 
     cleanup()
     client.clear()

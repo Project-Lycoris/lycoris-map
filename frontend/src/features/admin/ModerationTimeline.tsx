@@ -3,6 +3,7 @@ import { useAdminUi } from './ui'
 import { useAdminWork } from './work'
 import * as api from './api'
 import { fullTime, relativeTime } from './time'
+import { localizedReason } from './reason'
 
 /** Per-place moderation history; tolerates a backend that lacks the route. */
 export function ModerationTimeline({ markerId }: { markerId: number }) {
@@ -51,7 +52,11 @@ export function ModerationTimeline({ markerId }: { markerId: number }) {
                                     {relativeTime(event.createdAt, ui.language)}
                                 </time>
                             </p>
-                            {event.note && <p className="admin-meta">{event.note}</p>}
+                            {event.note && (
+                                <p className="admin-meta">
+                                    {localizedReason(event.note, ui.message)}
+                                </p>
+                            )}
                         </li>
                     ))}
                 </ol>

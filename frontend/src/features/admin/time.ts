@@ -32,8 +32,10 @@ export function relativeTime(value: string, language: Language, now = Date.now()
     if (Number.isNaN(date.getTime())) return value
     const seconds = Math.round((date.getTime() - now) / 1000)
     const absolute = Math.abs(seconds)
-    const formatter = new Intl.RelativeTimeFormat(locale(language), { numeric: 'always' })
-    if (absolute < 45) return formatter.format(0, 'second')
+    const formatter = new Intl.RelativeTimeFormat(locale(language), { numeric: 'auto' })
+    // Timestamps slightly in the future (clock skew) must read as "just now",
+    // never as "in 0 seconds" / "0 秒钟后".
+    if (absolute < 45) return language === 'zh' ? '刚刚' : 'just now'
     for (const [unit, size] of units) {
         if (absolute >= size || unit === 'second')
             return formatter.format(Math.round(seconds / size), unit)

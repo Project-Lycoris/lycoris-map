@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 import { markerTextSchema, type MarkerText } from '@/shared/api/markerWrites'
 import { DesignButton } from '@/shared/ui/design-primitives'
 import { readAccountPlace } from '@/shared/api/privatePlaces'
+import type { Marker } from '@/shared/api/markers'
 import { FacilityTags } from '@/features/places/FacilityTags'
 import { VenueTag } from '@/features/places/VenueTag'
 import { categoryLabels, openingHours, publicImageUrl } from '@/features/places/model'
@@ -15,6 +16,7 @@ import { fullTime, relativeTime } from './time'
 import { comparisonRows } from './comparison'
 import { moderationError } from './undoQueue'
 import { itemMarkerId, proposalDraft, type ReviewItem } from './reviewModel'
+import { QUICK_REASONS } from './reason'
 
 const quickReasons = [
     'Information is inaccurate',
@@ -73,7 +75,26 @@ function DetailBody({
     rejectRequest: number
     editRequest: number
 }) {
-    const ui = useAdminUi()
+    const ui = useAdminUi(),
+        work = useAdminWork()
+    const current = useQuery({
+        queryKey: [...work.prefix, 'current', item.kind === 'edit' ? item.markerId : 0, 'zh'],
+        enabled: item.kind === 'edit',
+        gcTime: 0,
+        retry: false,
+        queryFn: ({ signal }) =>
+            work.run(
+                (s) => readAccountPlace(String(item.kind === 'edit' ? item.markerId : 0), 'zh', s),
+                signal,
+            ),
+    })
+    const stale =
+        item.kind === 'edit' &&
+        item.edit.baseMarkerVersion != null &&
+        current.data != null &&
+        current.data.version !== item.edit.baseMarkerVersion
+    const title = item.kind === 'edit' ? (current.data?.title ?? item.title) : item.title
+    const approveDisabled = item.kind === 'edit' && (stale || current.isPending || current.isError)
     const [rejecting, setRejecting] = useState(false)
     const [editing, setEditing] = useState(false)
     const rejectTrigger = useRef<HTMLButtonElement>(null)
@@ -95,7 +116,7 @@ function DetailBody({
         <aside className="review-detail" aria-label={ui.message('Review details')}>
             <header className="review-detail-header">
                 <p className="review-kind">{ui.message(kindLabelFor(item))}</p>
-                <h2>{item.title}</h2>
+                <h2>{title}</h2>
                 <p className="admin-meta">
                     #{item.kind === 'marker' ? item.id : item.markerId} ·{' '}
                     {ui.message('Submitted by')} {item.submitter}
@@ -109,14 +130,22 @@ function DetailBody({
                 </p>
             </header>
             <div className="review-detail-body">
+                {stale && (
+                    <p className="review-stale" role="alert">
+                        {ui.message(
+                            'This place changed after the proposal was submitted. The proposal is out of date and can only be rejected.',
+                        )}
+                    </p>
+                )}
                 {item.kind === 'marker' && <NewPlaceDetail item={item} />}
-                {item.kind === 'edit' && <EditDetail item={item} />}
+                {item.kind === 'edit' && <EditDetail item={item} current={current} />}
                 {item.kind === 'image' && <ImageDetail item={item} />}
                 <ModerationTimeline markerId={itemMarkerId(item)} />
             </div>
             <footer className="review-detail-actions">
                 <DesignButton
                     onClick={() => onApprove(item)}
+                    disabled={approveDisabled}
                     aria-keyshortcuts="a"
                     aria-label={ui.message('Approve')}
                 >
@@ -133,6 +162,7 @@ function DetailBody({
                 {item.kind !== 'image' && (
                     <DesignButton
                         onClick={() => setEditing(true)}
+                        disabled={approveDisabled}
                         aria-keyshortcuts="e"
                         aria-label={ui.message('Modify and approve')}
                     >
@@ -143,6 +173,7 @@ function DetailBody({
             {rejecting && (
                 <RejectPanel
                     item={item}
+                    stale={stale}
                     close={closeReject}
                     submit={(reason) => {
                         setRejecting(false)
@@ -227,17 +258,15 @@ function NewPlaceDetail({ item }: { item: Extract<ReviewItem, { kind: 'marker' }
     )
 }
 
-function EditDetail({ item }: { item: Extract<ReviewItem, { kind: 'edit' }> }) {
+function EditDetail({
+    item,
+    current,
+}: {
+    item: Extract<ReviewItem, { kind: 'edit' }>
+    current: UseQueryResult<Marker, Error>
+}) {
     const ui = useAdminUi(),
-        work = useAdminWork(),
-        edit = item.edit,
-        current = useQuery({
-            queryKey: [...work.prefix, 'current', edit.markerId, 'zh'],
-            gcTime: 0,
-            retry: false,
-            queryFn: ({ signal }) =>
-                work.run((s) => readAccountPlace(String(edit.markerId), 'zh', s), signal),
-        })
+        edit = item.edit
     const rows = current.data ? comparisonRows(current.data, edit, ui.message) : []
     const changed = rows.filter((row) => row.changed)
     const unchanged = rows.filter((row) => !row.changed)
@@ -373,17 +402,21 @@ function ImageDetail({ item }: { item: Extract<ReviewItem, { kind: 'image' }> })
     )
 }
 
+const STALE_REASON = QUICK_REASONS[5]
+
 export function RejectPanel({
     item,
+    stale = false,
     close,
     submit,
 }: {
     item: ReviewItem
+    stale?: boolean
     close: () => void
     submit: (reason: string) => void
 }) {
     const ui = useAdminUi(),
-        [quick, setQuick] = useState(''),
+        [quick, setQuick] = useState(stale ? STALE_REASON : ''),
         [text, setText] = useState(''),
         first = useRef<HTMLButtonElement>(null)
     useEffect(() => {
@@ -399,9 +432,10 @@ export function RejectPanel({
         window.addEventListener('keydown', escape)
         return () => window.removeEventListener('keydown', escape)
     }, [close])
-    const reasons = quickReasons.filter(
-        (value) => value !== 'Inappropriate photo' || item.kind === 'image',
-    )
+    const reasons = [
+        ...(stale ? [STALE_REASON] : []),
+        ...quickReasons.filter((value) => value !== 'Inappropriate photo' || item.kind === 'image'),
+    ]
     const reason = [quick, text.trim()].filter(Boolean).join(' · ')
     return (
         <section

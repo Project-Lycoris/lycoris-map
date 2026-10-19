@@ -117,6 +117,21 @@ const messages = {
     'Unrelated to accessibility or friendly facilities': '与无障碍/友善设施无关',
     'Loading places…': '正在加载点位…',
 
+    Search: '搜索',
+    'Search title, submitter or place ID': '按标题、提交者或点位 ID 搜索',
+    Sort: '排序',
+    'Oldest first': '最早优先',
+    'Newest first': '最新优先',
+    'Out of date': '已过期',
+    'This place changed after the proposal was submitted. The proposal is out of date and can only be rejected.':
+        '提案提交后点位已被修改，此提案已过期，只能拒绝。',
+    'Proposal is out of date; ask the contributor to resubmit from the latest content':
+        '提案已过期，请按最新内容重新提交',
+    Account: '账号',
+    'Pending review': '待审核',
+    Skipped: '跳过',
+    'out-of-date proposals': '条过期提案',
+
     Records: '记录',
     'All statuses': '全部状态',
     'All categories': '全部分类',
@@ -138,6 +153,7 @@ const messages = {
     'Account restored': '恢复账号',
     'Password reset': '重置密码',
 } as const
+export { messages as adminMessages }
 export function useAdminUi() {
     const ui = useUi()
     return {

@@ -6,6 +6,7 @@ import { useAdminWork } from './work'
 import * as api from './api'
 import { Pagination } from './Pagination'
 import { fullTime, relativeTime } from './time'
+import { localizedReason } from './reason'
 
 export function AuditLog() {
     const ui = useAdminUi(),
@@ -23,8 +24,7 @@ export function AuditLog() {
     const missing = query.isError && api.isMissingRoute(query.error)
     const totalPages = Math.max(1, query.data?.totalPages ?? 1)
     const open = (event: api.ModerationEvent) => {
-        if (event.targetKind === 'user')
-            navigate(`/admin/usr?q=${encodeURIComponent(event.actorPublicId)}`)
+        if (event.targetKind === 'user') navigate(`/admin/usr?q=${event.targetId}`)
         else navigate(`/admin/all?markerId=${event.markerId ?? event.targetId}`)
     }
     return (
@@ -52,7 +52,14 @@ export function AuditLog() {
                                     {ui.message(api.moderationActionLabel(event.action))}
                                 </span>
                                 <span className="audit-target">
-                                    {event.targetKind} #{event.targetId}
+                                    {ui.message(api.moderationTargetLabel(event.targetKind))}
+                                    {event.targetKind === 'user'
+                                        ? event.targetLabel
+                                            ? ` · ${event.targetLabel}`
+                                            : ''
+                                        : event.markerTitle
+                                          ? ` · ${event.markerTitle}`
+                                          : ''}
                                 </span>
                                 <time
                                     dateTime={event.createdAt}
@@ -60,7 +67,11 @@ export function AuditLog() {
                                 >
                                     {relativeTime(event.createdAt, ui.language)}
                                 </time>
-                                {event.note && <span className="audit-note">{event.note}</span>}
+                                {event.note && (
+                                    <span className="audit-note">
+                                        {localizedReason(event.note, ui.message)}
+                                    </span>
+                                )}
                             </button>
                         </li>
                     ))}

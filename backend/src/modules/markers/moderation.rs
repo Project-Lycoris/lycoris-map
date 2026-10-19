@@ -40,6 +40,8 @@ pub struct ModerationEventDto {
     pub target_kind: String,
     pub target_id: i64,
     pub marker_id: Option<i64>,
+    pub marker_title: Option<String>,
+    pub target_label: Option<String>,
     pub note: Option<String>,
 }
 

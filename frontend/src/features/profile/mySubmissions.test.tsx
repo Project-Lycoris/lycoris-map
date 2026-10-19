@@ -33,55 +33,60 @@ afterEach(() => {
     vi.restoreAllMocks()
 })
 
-function mount() {
+function mount(language: 'en' | 'zh' = 'en') {
     return render(
         <QueryClientProvider client={client}>
-            <LanguageProvider initialPreference="en">
+            <LanguageProvider initialPreference={language}>
                 <MySubmissions />
             </LanguageProvider>
         </QueryClientProvider>,
     )
 }
 
+const submissions: submissionsApi.Submission[] = [
+    {
+        kind: 'marker',
+        id: 1,
+        markerId: 1,
+        markerTitle: 'Approved place',
+        status: 'APPROVED',
+        reviewNote: null,
+        createdAt: '2026-10-18T06:50:15Z',
+        reviewedAt: '2026-10-18T07:00:00Z',
+    },
+    {
+        kind: 'edit',
+        id: 2,
+        markerId: 1,
+        markerTitle: 'Edited place',
+        status: 'PENDING',
+        reviewNote: null,
+        createdAt: '2026-10-18T06:50:15Z',
+        reviewedAt: null,
+    },
+    {
+        kind: 'image',
+        id: 3,
+        markerId: 1,
+        markerTitle: 'Photo place',
+        status: 'REJECTED',
+        reviewNote: 'Information is inaccurate · blurry',
+        createdAt: '2026-10-18T06:50:15Z',
+        reviewedAt: '2026-10-18T07:00:00Z',
+    },
+]
+
 it('renders every submission status and a rejection reason', async () => {
-    vi.spyOn(submissionsApi, 'readMySubmissions').mockResolvedValue([
-        {
-            kind: 'marker',
-            id: 1,
-            markerId: 1,
-            markerTitle: 'Approved place',
-            status: 'APPROVED',
-            reviewNote: null,
-            createdAt: '2026-10-18T06:50:15Z',
-            reviewedAt: '2026-10-18T07:00:00Z',
-        },
-        {
-            kind: 'edit',
-            id: 2,
-            markerId: 1,
-            markerTitle: 'Edited place',
-            status: 'PENDING',
-            reviewNote: null,
-            createdAt: '2026-10-18T06:50:15Z',
-            reviewedAt: null,
-        },
-        {
-            kind: 'image',
-            id: 3,
-            markerId: 1,
-            markerTitle: 'Photo place',
-            status: 'REJECTED',
-            reviewNote: 'blurry',
-            createdAt: '2026-10-18T06:50:15Z',
-            reviewedAt: '2026-10-18T07:00:00Z',
-        },
-    ])
+    vi.spyOn(submissionsApi, 'readMySubmissions').mockResolvedValue(submissions)
     mount()
     const section = await screen.findByRole('region', { name: 'My submissions' })
     expect(screen.getByText('Approved place')).toBeInTheDocument()
     expect(screen.getByText('Edited place')).toBeInTheDocument()
     expect(screen.getByText('Photo place')).toBeInTheDocument()
-    expect(screen.getByText('Not approved: blurry')).toBeInTheDocument()
+    expect(screen.getByText('Not approved: Information is inaccurate · blurry')).toBeInTheDocument()
+    expect(screen.getByText('Pending review')).toBeInTheDocument()
+    expect(screen.getByText('Approved')).toBeInTheDocument()
+    expect(screen.getAllByText('Not approved')).toHaveLength(1)
     expect(section).toBeInTheDocument()
 })
 
@@ -95,4 +100,13 @@ it('stays hidden and silent on a real error', async () => {
     vi.spyOn(submissionsApi, 'readMySubmissions').mockRejectedValue(new Error('boom'))
     const { container } = mount()
     await waitFor(() => expect(container).toBeEmptyDOMElement())
+})
+
+it('translates statuses and shortcut reasons for Chinese viewers', async () => {
+    vi.spyOn(submissionsApi, 'readMySubmissions').mockResolvedValue(submissions)
+    mount('zh')
+    await screen.findByRole('region', { name: '我的提交' })
+    expect(screen.getByText('待审核')).toBeInTheDocument()
+    expect(screen.getByText('已通过')).toBeInTheDocument()
+    expect(screen.getByText('未通过: 信息不准确 · blurry')).toBeInTheDocument()
 })

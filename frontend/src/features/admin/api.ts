@@ -63,6 +63,7 @@ export const editSchema = z.object({
     proposerPublicId: z.string().nullable(),
     proposerIsOwner: z.boolean(),
     status: reviewStatusSchema,
+    baseMarkerVersion: z.number().int().safe().nullable().optional(),
     createdAt: z.string(),
     proposerSubmissionStats: submissionStatsSchema.optional(),
 })
@@ -279,6 +280,8 @@ export const moderationEventSchema = z.object({
     targetKind: z.enum(['marker', 'edit', 'image', 'user']),
     targetId: id,
     markerId: id.nullable(),
+    markerTitle: z.string().nullable().optional(),
+    targetLabel: z.string().nullable().optional(),
     note: z.string().nullable(),
 })
 export type ModerationEvent = z.infer<typeof moderationEventSchema>
@@ -327,4 +330,14 @@ const actionLabels: Record<ModerationAction, string> = {
 }
 export function moderationActionLabel(action: ModerationAction): string {
     return actionLabels[action]
+}
+
+const targetLabels: Record<ModerationEvent['targetKind'], string> = {
+    marker: 'New place',
+    edit: 'Content changes',
+    image: 'Photo submission',
+    user: 'Account',
+}
+export function moderationTargetLabel(kind: ModerationEvent['targetKind']): string {
+    return targetLabels[kind]
 }

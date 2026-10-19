@@ -77,6 +77,13 @@ export function UndoNotifications({
                             <span>
                                 {ui.message('Succeeded')} {entry.summary.ok} {ui.message('items')},{' '}
                                 {ui.message('Failed')} {entry.summary.failed} {ui.message('items')}
+                                {entry.summary.skipped > 0 && (
+                                    <>
+                                        {' · '}
+                                        {ui.message('Skipped')} {entry.summary.skipped}{' '}
+                                        {ui.message('out-of-date proposals')}
+                                    </>
+                                )}
                             </span>
                             {entry.summary.failures.length > 0 && (
                                 <details>

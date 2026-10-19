@@ -166,6 +166,7 @@ pub struct EditProposalDto {
     pub proposer_public_id: Option<String>,
     pub proposer_is_owner: bool,
     pub status: String,
+    pub base_marker_version: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub proposer_submission_stats: ProposerSubmissionStats,
 }
@@ -193,6 +194,7 @@ impl From<EditProposalRow> for EditProposalDto {
             proposer_public_id: row.proposer_public_id,
             proposer_is_owner: row.proposer_is_owner,
             status: row.status,
+            base_marker_version: row.base_marker_version,
             created_at: row.created_at,
             proposer_submission_stats: ProposerSubmissionStats::default(),
         }

@@ -4,23 +4,36 @@ import { useUi } from '@/shared/i18n/ui'
 import { readMySubmissions, type Submission } from '@/shared/api/mySubmissions'
 import { privateKeys } from '@/shared/query/keys'
 import './mySubmissions.css'
+import { localizedReason } from '@/features/admin/reason'
 
 /** Profile-scoped translations; the shared table has no such keys yet. */
-const messages: Record<string, string> = {
+export const submissionMessages: Record<string, string> = {
     'My submissions': '我的提交',
     'New place': '新增点位',
     'Content changes': '内容修改',
     'Photo submission': '图片',
+    Approved: '已通过',
     'Not approved': '未通过',
-    pending: '待审核',
-    approved: '已通过',
-    rejected: '已拒绝',
+    'Pending review': '待审核',
+    'Information is inaccurate': '信息不准确',
+    'Duplicate place': '重复点位',
+    'Wrong location': '位置错误',
+    'Inappropriate photo': '照片不合适',
+    'Unrelated to accessibility or friendly facilities': '与无障碍/友善设施无关',
+    'Proposal is out of date; ask the contributor to resubmit from the latest content':
+        '提案已过期，请按最新内容重新提交',
 }
 
 const kindLabel: Record<Submission['kind'], string> = {
     marker: 'New place',
     edit: 'Content changes',
     image: 'Photo submission',
+}
+
+const statusLabel: Record<Submission['status'], string> = {
+    PENDING: 'Pending review',
+    APPROVED: 'Approved',
+    REJECTED: 'Not approved',
 }
 
 export function MySubmissions() {
@@ -37,7 +50,9 @@ export function MySubmissions() {
             store!.runPrivate(scope!, (s) => readMySubmissions(ui.language, s), signal),
     })
     const t = (key: string) =>
-        ui.language === 'zh' && Object.hasOwn(messages, key) ? messages[key]! : ui.message(key)
+        ui.language === 'zh' && Object.hasOwn(submissionMessages, key)
+            ? submissionMessages[key]!
+            : ui.message(key)
     // A missing route (404) resolves to null and an unexpected failure must not
     // take down the rest of the profile.
     if (query.isError || !query.data?.length) return null
@@ -55,7 +70,7 @@ export function MySubmissions() {
                             <span
                                 className={`submission-status submission-${submission.status.toLowerCase()}`}
                             >
-                                {t(submission.status.toLowerCase())}
+                                {t(statusLabel[submission.status])}
                             </span>
                             <time dateTime={submission.createdAt}>
                                 {new Intl.DateTimeFormat(ui.language === 'zh' ? 'zh-CN' : 'en-US', {
@@ -66,7 +81,9 @@ export function MySubmissions() {
                         {submission.status === 'REJECTED' && (
                             <p className="submission-note">
                                 {t('Not approved')}
-                                {submission.reviewNote ? `: ${submission.reviewNote}` : ''}
+                                {submission.reviewNote
+                                    ? `: ${localizedReason(submission.reviewNote, t)}`
+                                    : ''}
                             </p>
                         )}
                     </li>

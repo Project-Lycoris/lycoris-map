@@ -866,3 +866,25 @@
     flex-basis: 100%;
     color: #625b65;
 }
+
+/* Stale edit proposals. */
+.review-stale {
+    margin: 0 0 12px;
+    padding: 10px 12px;
+    border: 2px solid #a4442f;
+    border-radius: 12px;
+    background: #fff1ec;
+    color: #6d2618;
+    font-weight: 600;
+}
+.stale-badge {
+    display: inline-block;
+    margin-top: 2px;
+    padding: 0 7px;
+    border-radius: 10px;
+    border: 1px solid #a4442f;
+    background: #fff1ec;
+    color: #6d2618;
+    font-size: 12px;
+    font-weight: 600;
+}
