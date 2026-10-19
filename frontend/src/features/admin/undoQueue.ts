@@ -50,16 +50,14 @@ function singlePath(entry: QueueEntry, language: Language): string {
 }
 
 function singleBody(entry: QueueEntry): api.ModerationPayload | undefined {
-    const item = entry.items[0]!
-    if (item.kind === 'image') return undefined
     const body: api.ModerationPayload = {}
     if (entry.reason?.trim()) body.reason = entry.reason.trim()
     return Object.keys(body).length ? body : undefined
 }
 
-function batchBody(entry: QueueEntry) {
+function batchBody(entry: QueueEntry, items: ReviewItem[]) {
     return {
-        items: entry.items.map((item) => ({
+        items: items.map((item) => ({
             kind: item.kind,
             id: item.id,
             decision: entry.decision,
@@ -88,17 +86,20 @@ export function sendKeepalive(requests: QueueEntry[], language: Language) {
                 ...(body ? { body: JSON.stringify(body) } : {}),
             }).catch(() => undefined)
         } else {
-            const body = batchBody(entry)
-            void fetch('/api/admin/moderation/batch', {
-                method: 'POST',
-                credentials: 'include',
-                keepalive: true,
-                headers: {
-                    Accept: 'application/json, text/plain, */*',
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(body),
-            }).catch(() => undefined)
+            // Navigation must obey the same 50-item API limit as normal saves.
+            for (let offset = 0; offset < entry.items.length; offset += 50) {
+                const body = batchBody(entry, entry.items.slice(offset, offset + 50))
+                void fetch('/api/admin/moderation/batch', {
+                    method: 'POST',
+                    credentials: 'include',
+                    keepalive: true,
+                    headers: {
+                        Accept: 'application/json, text/plain, */*',
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(body),
+                }).catch(() => undefined)
+            }
         }
     }
 }

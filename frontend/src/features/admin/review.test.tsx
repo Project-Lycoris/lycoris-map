@@ -175,6 +175,93 @@ it('flushes pending decisions on pagehide with keepalive', async () => {
     )
 })
 
+it('preserves the photo rejection reason when leaving before the undo deadline', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetcher)
+    vi.mocked(api.readPendingMarkers).mockResolvedValue([])
+    vi.mocked(api.readImages).mockResolvedValue([imageProposal()])
+    mount()
+    await screen.findByRole('heading', { name: 'Photo place' })
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }))
+    fireEvent.change(screen.getByLabelText('Reason (optional)'), {
+        target: { value: 'Wrong entrance' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm reject' }))
+    fireEvent(window, new Event('pagehide'))
+    expect(fetcher).toHaveBeenCalledWith(
+        '/api/admin/markers/image-proposals/5/reject?lang=zh',
+        expect.objectContaining({ body: JSON.stringify({ reason: 'Wrong entrance' }) }),
+    )
+})
+
+it('splits a large selection into accepted batch sizes when leaving the page', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetcher)
+    vi.mocked(api.readPendingMarkers).mockResolvedValue(
+        Array.from({ length: 51 }, (_, index) =>
+            pendingMarker({ id: index + 1, title: `Batch ${index}` }),
+        ),
+    )
+    mount()
+    await screen.findByRole('heading', { name: 'Batch 0' })
+    fireEvent.click(screen.getByRole('checkbox', { name: /Select all filtered/ }))
+    fireEvent.click(
+        within(screen.getByRole('region', { name: 'Bulk actions' })).getByRole('button', {
+            name: 'Approve',
+        }),
+    )
+    fireEvent(window, new Event('pagehide'))
+    const bodies = fetcher.mock.calls.map(
+        ([, init]) => JSON.parse(init.body).items as api.BatchRequestItem[],
+    )
+    expect(bodies.flat()).toHaveLength(51)
+    expect(bodies.every((items) => items.length <= 50)).toBe(true)
+})
+
+it('does not carry a keyboard-opened rejection form onto the next item', async () => {
+    vi.mocked(api.readPendingMarkers).mockResolvedValue([
+        pendingMarker({ id: 1, title: 'One' }),
+        pendingMarker({ id: 2, title: 'Two' }),
+    ])
+    mount()
+    await screen.findByRole('heading', { name: 'One' })
+    fireEvent.keyDown(window, { key: 'r' })
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm reject' }))
+    await screen.findByRole('heading', { name: 'Two' })
+    expect(screen.queryByRole('region', { name: 'Reject reason' })).not.toBeInTheDocument()
+    fireEvent.keyDown(window, { key: 'r' })
+    expect(screen.getByRole('region', { name: 'Reject reason' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+})
+
+it('counts the quick reason and free text together against the server limit', async () => {
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: 'Reject' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Wrong location' }))
+    fireEvent.change(screen.getByLabelText('Reason (optional)'), {
+        target: { value: '字'.repeat(500) },
+    })
+    expect(screen.getByRole('button', { name: 'Confirm reject' })).toBeDisabled()
+    fireEvent.keyDown(screen.getByLabelText('Reason (optional)'), { key: 'Enter' })
+    expect(screen.getByRole('region', { name: 'Reject reason' })).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Reason (optional)'), {
+        target: { value: '入口在另一侧' },
+    })
+    expect(screen.getByRole('button', { name: 'Confirm reject' })).toBeEnabled()
+})
+
+it('does not reject while Enter is confirming Chinese composition', async () => {
+    await ready()
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }))
+    const reason = screen.getByLabelText('Reason (optional)')
+    fireEvent.change(reason, { target: { value: '入口不正确' } })
+    fireEvent.keyDown(reason, { key: 'Enter', isComposing: true })
+    expect(screen.getByRole('region', { name: 'Reject reason' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Pending place' })).toBeInTheDocument()
+    expect(api.moderate).not.toHaveBeenCalled()
+})
+
 it('restores an item and explains a failed decision', async () => {
     vi.mocked(api.moderate).mockRejectedValue(new ApiError(409, 'conflict'))
     await ready()

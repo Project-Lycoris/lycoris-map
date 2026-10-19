@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, useLocation } from 'react-router'
 import { SessionProvider } from '@/features/auth/SessionProvider'
@@ -124,6 +124,65 @@ afterEach(() => {
     client?.clear()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    vi.useRealTimers()
+})
+
+it('requests fresh results whenever only the search text changes', async () => {
+    vi.mocked(api.searchMarkers).mockImplementation(async ({ q }) =>
+        page([adminMarker({ title: q ? `Result for ${q}` : 'Place one' })]),
+    )
+    mount('/admin/all')
+    await screen.findByRole('button', { name: /Place one/ })
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'airport' } })
+    await screen.findByRole('button', { name: /Result for airport/ })
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'park' } })
+    await screen.findByRole('button', { name: /Result for park/ })
+    expect(vi.mocked(api.searchMarkers).mock.calls.at(-1)![0].q).toBe('park')
+})
+
+it('refreshes disable and restore state after each successful action', async () => {
+    let disabled = false
+    vi.mocked(api.searchMarkers).mockImplementation(async () =>
+        page([adminMarker({ deactivated: disabled })]),
+    )
+    vi.mocked(api.deactivateMarker).mockImplementation(async () => {
+        disabled = true
+    })
+    vi.mocked(api.restoreMarker).mockImplementation(async () => {
+        disabled = false
+    })
+    mount('/admin/all?markerId=1&q=1')
+    fireEvent.click(await screen.findByRole('button', { name: 'Disable' }))
+    fireEvent.click(
+        within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Confirm' }),
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore' }))
+    fireEvent.click(
+        within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Confirm' }),
+    )
+    await screen.findByRole('button', { name: 'Disable' })
+    expect(api.restoreMarker).toHaveBeenCalledTimes(1)
+})
+
+it('keeps a reviewed place visible with its updated status in the all-places list', async () => {
+    let approved = false
+    vi.mocked(api.searchMarkers).mockImplementation(async () =>
+        page([adminMarker({ reviewStatus: approved ? 'APPROVED' : 'PENDING' })]),
+    )
+    vi.mocked(api.moderate).mockImplementation(async () => {
+        approved = true
+    })
+    mount('/admin/all?markerId=1&q=1')
+    await screen.findByRole('button', { name: 'Approve' })
+    vi.useFakeTimers()
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+    })
+    vi.useRealTimers()
+    await screen.findByRole('heading', { name: 'Place one' })
+    expect(screen.getByRole('button', { name: /Place one.*Approved/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
 })
 
 it('sends the URL filters to the server and updates them from the controls', async () => {

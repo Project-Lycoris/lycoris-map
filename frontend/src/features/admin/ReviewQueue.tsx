@@ -21,6 +21,7 @@ import {
 } from './reviewModel'
 import { useUndoQueue } from './undoQueue'
 import { UndoNotifications } from './UndoNotifications'
+import { refreshModeration } from './refresh'
 
 const quickBatchReasons = [
     'Information is inaccurate',
@@ -127,12 +128,9 @@ export function ReviewQueue() {
                 for (const item of items) next.delete(item.key)
                 return next
             })
-            void client.invalidateQueries({
-                queryKey: [...work.prefix, 'current'],
-                refetchType: 'none',
-            })
+            void refreshModeration(client, work.prefix, work.session.scope)
         },
-        [client, work.prefix],
+        [client, work.prefix, work.session.scope],
     )
     const undo = useUndoQueue({
         run: work.run,

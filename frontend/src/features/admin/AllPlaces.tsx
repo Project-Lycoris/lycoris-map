@@ -14,7 +14,8 @@ import { PlaceMapPreview } from './PlaceMapPreview'
 import { ModerationTimeline } from './ModerationTimeline'
 import { RejectPanel } from './ReviewDetail'
 import { Pagination } from './Pagination'
-import { markerItem } from './reviewModel'
+import { markerItem, type ReviewItem } from './reviewModel'
+import { refreshModeration } from './refresh'
 import { moderationError, useUndoQueue } from './undoQueue'
 import { UndoNotifications } from './UndoNotifications'
 import { fullTime, relativeTime } from './time'
@@ -47,7 +48,9 @@ export function AllPlaces() {
     const [removed, setRemoved] = useState<Set<number>>(() => new Set())
     const [rejecting, setRejecting] = useState(false)
     const [editing, setEditing] = useState(false)
+    const [toggling, setToggling] = useState(false)
 
+    const q = (params.get('q') ?? '').trim()
     const page = Math.max(0, Number(params.get('page') ?? '0') || 0)
     const status = (params.get('status') ?? '') as '' | 'PENDING' | 'APPROVED' | 'REJECTED'
     const category = params.get('category') ?? ''
@@ -88,7 +91,7 @@ export function AllPlaces() {
         queryKey: [
             ...work.prefix,
             'all-search',
-            { page, status, category, deactivated, sort },
+            { q, page, status, category, deactivated, sort },
             ui.language,
         ],
         gcTime: 0,
@@ -100,7 +103,7 @@ export function AllPlaces() {
                         {
                             page,
                             size: 20,
-                            q: (params.get('q') ?? '').trim() || undefined,
+                            q: q || undefined,
                             status: status || undefined,
                             category: category || undefined,
                             deactivated: deactivated === '' ? undefined : deactivated === 'true',
@@ -119,16 +122,21 @@ export function AllPlaces() {
     const selected = visible.find((item) => item.id === selectedId) ?? null
     const totalPages = Math.max(1, query.data?.totalPages ?? 1)
 
-    const restore = useCallback((list: ReturnType<typeof markerItem>[]) => {
+    const restore = useCallback((list: ReviewItem[]) => {
         setRemoved((previous) => {
             const next = new Set(previous)
             for (const item of list) next.delete(item.id)
             return next
         })
     }, [])
-    const commit = useCallback(() => {
-        void client.invalidateQueries({ queryKey: [...work.prefix, 'all-search'] })
-    }, [client, work.prefix])
+    const commit = useCallback(
+        async (list: ReviewItem[] = []) => {
+            await refreshModeration(client, work.prefix, work.session.scope)
+            // All-status results still contain the reviewed place with its new status.
+            restore(list)
+        },
+        [client, work.prefix, work.session.scope, restore],
+    )
     const undo = useUndoQueue({
         run: work.run,
         language: 'zh',
@@ -136,12 +144,20 @@ export function AllPlaces() {
         onCommit: commit,
     })
 
-    const toggleActive = (marker: api.AdminMarker) =>
-        work.run((signal) =>
-            marker.deactivated
-                ? api.restoreMarker(marker.id, signal)
-                : api.deactivateMarker(marker.id, signal),
-        )
+    const toggleActive = async (marker: api.AdminMarker) => {
+        if (toggling) return
+        setToggling(true)
+        try {
+            await work.run((signal) =>
+                marker.deactivated
+                    ? api.restoreMarker(marker.id, signal)
+                    : api.deactivateMarker(marker.id, signal),
+            )
+        } finally {
+            setToggling(false)
+            void commit()
+        }
+    }
 
     const decide = (marker: api.AdminMarker, decision: 'approve' | 'reject', reason?: string) => {
         setRemoved((previous) => new Set([...previous, marker.id]))
@@ -150,12 +166,9 @@ export function AllPlaces() {
     }
 
     useEffect(() => {
-        setRemoved((previous) => {
-            const ids = new Set(items.map((item) => item.id))
-            const next = new Set([...previous].filter((id) => ids.has(id)))
-            return next.size === previous.size ? previous : next
-        })
-    }, [items])
+        setEditing(false)
+        setRejecting(false)
+    }, [selectedId])
 
     return (
         <section className="admin-content all-places">
@@ -311,7 +324,7 @@ export function AllPlaces() {
                             marker={selected}
                             rejecting={rejecting}
                             editing={editing}
-                            busy={work.busy}
+                            busy={work.busy || toggling}
                             onReject={() => setRejecting(true)}
                             onCancelReject={() => setRejecting(false)}
                             onRejectConfirm={(reason) => decide(selected, 'reject', reason)}

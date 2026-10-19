@@ -98,11 +98,15 @@ function DetailBody({
     const [rejecting, setRejecting] = useState(false)
     const [editing, setEditing] = useState(false)
     const rejectTrigger = useRef<HTMLButtonElement>(null)
+    const consumedReject = useRef(rejectRequest)
+    const consumedEdit = useRef(editRequest)
     useEffect(() => {
-        if (rejectRequest) setRejecting(true)
+        if (rejectRequest !== consumedReject.current) setRejecting(true)
+        consumedReject.current = rejectRequest
     }, [rejectRequest])
     useEffect(() => {
-        if (editRequest && item.kind !== 'image') setEditing(true)
+        if (editRequest !== consumedEdit.current && item.kind !== 'image') setEditing(true)
+        consumedEdit.current = editRequest
     }, [editRequest, item.kind])
     useEffect(() => {
         onOverlayChange?.(rejecting || editing)
@@ -437,6 +441,7 @@ export function RejectPanel({
         ...quickReasons.filter((value) => value !== 'Inappropriate photo' || item.kind === 'image'),
     ]
     const reason = [quick, text.trim()].filter(Boolean).join(' · ')
+    const reasonLength = Array.from(reason).length
     return (
         <section
             className="review-reject"
@@ -445,10 +450,12 @@ export function RejectPanel({
                 if (
                     event.key === 'Enter' &&
                     !event.shiftKey &&
+                    !event.nativeEvent.isComposing &&
+                    event.nativeEvent.keyCode !== 229 &&
                     event.target instanceof HTMLTextAreaElement
                 ) {
                     event.preventDefault()
-                    submit(reason)
+                    if (reasonLength <= 500) submit(reason)
                 }
             }}
         >
@@ -475,10 +482,10 @@ export function RejectPanel({
                 />
             </label>
             <p className="admin-meta">
-                {ui.message('Enter confirms; Shift+Enter adds a line.')} {text.length}/500
+                {ui.message('Enter confirms; Shift+Enter adds a line.')} {reasonLength}/500
             </p>
             <div className="admin-actions">
-                <DesignButton onClick={() => submit(reason)}>
+                <DesignButton disabled={reasonLength > 500} onClick={() => submit(reason)}>
                     {ui.message('Confirm reject')}
                 </DesignButton>
                 <DesignButton onClick={close}>{ui.message('Cancel')}</DesignButton>

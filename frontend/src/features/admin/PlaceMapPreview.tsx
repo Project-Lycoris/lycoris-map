@@ -1,5 +1,5 @@
 import 'leaflet/dist/leaflet.css'
-import { CircleMarker, MapContainer, TileLayer } from 'react-leaflet'
+import { AttributionControl, CircleMarker, MapContainer, TileLayer } from 'react-leaflet'
 import { osmTileUrl } from '@/features/map/mapSources'
 import { useAdminUi } from './ui'
 
@@ -24,7 +24,11 @@ export function PlaceMapPreview({ lat, lng, title }: { lat: number; lng: number;
                 attributionControl={false}
                 className="review-map-canvas"
             >
-                <TileLayer url={osmTileUrl} />
+                <AttributionControl prefix={false} />
+                <TileLayer
+                    url={osmTileUrl}
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                />
                 <CircleMarker
                     center={[lat, lng]}
                     radius={9}
