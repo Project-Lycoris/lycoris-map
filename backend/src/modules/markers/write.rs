@@ -21,6 +21,9 @@ use crate::modules::markers::localization::{
     normalize, normalize_category_query, source_hash, translation_is_current,
 };
 use crate::modules::markers::model::{MarkerRow, TranslationRow, can_view};
+use crate::modules::markers::moderation::{
+    ModerationEventDto, SubmissionDto, escape_like, normalize_review_note, record_event,
+};
 use crate::modules::markers::write_model::{
     Actor, DEFAULT_VENUE_TYPE, EditProposalRow, MSG_MARK_IMAGE_UPLOAD_ONLY, MSG_MARKER_NOT_FOUND,
     MSG_PROPOSAL_ALREADY_HANDLED, MSG_PROPOSAL_NOT_FOUND, MSG_RELATED_MARKER_NOT_FOUND,
@@ -53,6 +56,13 @@ struct MarkerValues {
     last_edited_by_owner: bool,
 }
 
+/// 编辑提案“先改再通过”时的归属覆盖：最终修改人仍是提案作者。
+struct Attribution<'a> {
+    username: &'a str,
+    public_id: Option<&'a str>,
+    is_owner: bool,
+}
+
 /// `resolve_edit_text` 的结果：目标语言与合并后的文本。
 struct EditText {
     language: String,
@@ -64,6 +74,54 @@ struct EditText {
 #[derive(Debug, sqlx::FromRow)]
 struct FavoriteId {
     marker_id: i64,
+}
+
+/// 管理员搜索行：点位字段 + 仅管理员可见的审核理由。
+#[derive(Debug, Clone)]
+pub struct AdminMarkerRow {
+    pub marker: MarkerRow,
+    pub review_note: Option<String>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct ReviewNoteRow {
+    id: i64,
+    review_note: Option<String>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct MySubmissionRow {
+    id: i64,
+    marker_id: i64,
+    marker_title: String,
+    status: String,
+    review_note: Option<String>,
+    created_at: chrono::DateTime<chrono::Utc>,
+    reviewed_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct MySubmissionImageRow {
+    id: i64,
+    marker_id: i64,
+    marker_title: String,
+    status: String,
+    review_note: Option<String>,
+    created_at: chrono::DateTime<chrono::Utc>,
+    reviewed_at: Option<chrono::DateTime<chrono::Utc>>,
+    image_url: String,
+}
+
+/// `GET /api/admin/markers/search` 的过滤与分页参数（已归一）。
+#[derive(Debug, Clone)]
+pub struct MarkerSearchQuery {
+    pub q: String,
+    pub status: Option<String>,
+    pub category: Option<String>,
+    pub deactivated: Option<bool>,
+    pub sort: String,
+    pub page: i64,
+    pub size: i64,
 }
 
 /// 点位写入服务。
@@ -355,29 +413,22 @@ impl MarkerWriteService {
         Ok(marker)
     }
 
-    /// `POST /api/admin/markers/{id}/approve`：管理员直接通过待审点位，推进版本。
+    /// `POST /api/admin/markers/{id}/approve`（无请求体，兼容旧客户端）。
     pub async fn approve_marker(
         &self,
         actor: &Actor,
         marker_id: i64,
     ) -> Result<MarkerRow, WriteError> {
-        self.direct_review(actor, marker_id, "APPROVED").await
+        self.approve_marker_with(actor, marker_id, None, "zh").await
     }
 
-    /// `POST /api/admin/markers/{id}/reject`：管理员直接驳回待审点位，推进版本。
-    pub async fn reject_marker(
+    /// `POST /api/admin/markers/{id}/approve`：可先按 `changes` 修改再通过。
+    pub async fn approve_marker_with(
         &self,
         actor: &Actor,
         marker_id: i64,
-    ) -> Result<MarkerRow, WriteError> {
-        self.direct_review(actor, marker_id, "REJECTED").await
-    }
-
-    async fn direct_review(
-        &self,
-        actor: &Actor,
-        marker_id: i64,
-        status: &str,
+        changes: Option<MarkerUpdateRequest>,
+        request_language: &str,
     ) -> Result<MarkerRow, WriteError> {
         ensure_admin(actor)?;
         let mut tx = self
@@ -389,9 +440,82 @@ impl MarkerWriteService {
         let Some(marker) = marker else {
             return Err(WriteError::NotFound(MSG_MARKER_NOT_FOUND.to_string()));
         };
+        let (updated, action) = match changes {
+            Some(request) => (
+                apply_update_locked(&mut tx, &marker, request_language, request, None).await?,
+                "approve_with_changes",
+            ),
+            None => {
+                let mut values = base_values(&marker);
+                values.review_status = "APPROVED".to_string();
+                (
+                    write_marker_fields(&mut tx, marker_id, values).await?,
+                    "approve",
+                )
+            }
+        };
+        set_marker_review_note(&mut tx, marker_id, None).await?;
+        record_event(
+            &mut tx,
+            &actor.public_id,
+            &actor.username,
+            action,
+            "marker",
+            marker_id,
+            Some(marker_id),
+            None,
+        )
+        .await
+        .map_err(|error| log_db_error(&error))?;
+        tx.commit().await.map_err(|error| log_db_error(&error))?;
+        self.invalidate_after_commit().await;
+        Ok(updated)
+    }
+
+    /// `POST /api/admin/markers/{id}/reject`（无请求体，兼容旧客户端）。
+    pub async fn reject_marker(
+        &self,
+        actor: &Actor,
+        marker_id: i64,
+    ) -> Result<MarkerRow, WriteError> {
+        self.reject_marker_with_reason(actor, marker_id, None).await
+    }
+
+    /// `POST /api/admin/markers/{id}/reject`：可选拒绝理由写入 `review_note`。
+    pub async fn reject_marker_with_reason(
+        &self,
+        actor: &Actor,
+        marker_id: i64,
+        reason: Option<&str>,
+    ) -> Result<MarkerRow, WriteError> {
+        ensure_admin(actor)?;
+        let note = normalize_review_note(reason)
+            .map_err(|message| WriteError::BadRequest(message.to_string()))?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| log_db_error(&error))?;
+        let marker = lock_marker(&mut tx, marker_id).await?;
+        let Some(marker) = marker else {
+            return Err(WriteError::NotFound(MSG_MARKER_NOT_FOUND.to_string()));
+        };
         let mut values = base_values(&marker);
-        values.review_status = status.to_string();
+        values.review_status = "REJECTED".to_string();
         let updated = write_marker_fields(&mut tx, marker_id, values).await?;
+        set_marker_review_note(&mut tx, marker_id, note.as_deref()).await?;
+        record_event(
+            &mut tx,
+            &actor.public_id,
+            &actor.username,
+            "reject",
+            "marker",
+            marker_id,
+            Some(marker_id),
+            note.as_deref(),
+        )
+        .await
+        .map_err(|error| log_db_error(&error))?;
         tx.commit().await.map_err(|error| log_db_error(&error))?;
         self.invalidate_after_commit().await;
         Ok(updated)
@@ -424,11 +548,26 @@ impl MarkerWriteService {
         .map_err(|error| log_db_error(&error))
     }
 
-    /// `POST /api/admin/markers/edit-proposals/{id}/approve`：同事务一次性地核对版本并落库。
+    /// `POST /api/admin/markers/edit-proposals/{id}/approve`（无请求体）。
     pub async fn approve_edit_proposal(
         &self,
         actor: &Actor,
         proposal_id: i64,
+    ) -> Result<MarkerRow, WriteError> {
+        self.approve_edit_proposal_with_changes(actor, proposal_id, None, "zh")
+            .await
+    }
+
+    /// `POST /api/admin/markers/edit-proposals/{id}/approve`：可先改再通过。
+    ///
+    /// 以提案内容为基础、用 `changes` 中出现的字段覆盖，再复用管理员 PATCH 的校验与
+    /// 写入逻辑；版本冲突规则与普通通过一致。
+    pub async fn approve_edit_proposal_with_changes(
+        &self,
+        actor: &Actor,
+        proposal_id: i64,
+        changes: Option<MarkerUpdateRequest>,
+        request_language: &str,
     ) -> Result<MarkerRow, WriteError> {
         ensure_admin(actor)?;
         let mut tx = self
@@ -465,38 +604,89 @@ impl MarkerWriteService {
             return Err(WriteError::Conflict(MSG_STALE_VERSION.to_string()));
         }
 
-        // Public contributions always update Chinese source content. Only the
-        // explicit admin edit path below can write a manual English translation.
-        let mut values = base_values(&marker);
-        values.source_language = "zh".to_string();
-        values.category = normalize_category(Some(&proposal.category))?;
-        values.categories = proposal.categories.clone();
-        values.opening_hours_note = proposal.opening_hours_note.clone();
-        values.is_public = proposal.is_public;
-        values.is_active = proposal.is_active;
-        values.open_time_start = proposal.open_time_start.clone();
-        values.open_time_end = proposal.open_time_end.clone();
-        values.venue_type = proposal.venue_type.clone();
-        values.review_status = "APPROVED".to_string();
-        values.last_edited_by = Some(proposal.proposer_username.clone());
-        values.last_edited_by_public_id = proposal.proposer_public_id.clone();
-        values.last_edited_by_owner = proposal.proposer_is_owner;
-        values.title = proposal.title.clone();
-        values.description = proposal.description.clone();
-        let updated = write_marker_fields(&mut tx, marker.id, values).await?;
-        update_proposal_status(&mut tx, proposal_id, "APPROVED", &actor.username).await?;
+        let (updated, action) = match changes {
+            Some(request) => {
+                let base = proposal_as_marker(&marker, &proposal);
+                let attribution = Attribution {
+                    username: &proposal.proposer_username,
+                    public_id: proposal.proposer_public_id.as_deref(),
+                    is_owner: proposal.proposer_is_owner,
+                };
+                (
+                    apply_update_locked(
+                        &mut tx,
+                        &base,
+                        request_language,
+                        request,
+                        Some(attribution),
+                    )
+                    .await?,
+                    "approve_with_changes",
+                )
+            }
+            None => {
+                // Public contributions always update Chinese source content. Only the
+                // explicit admin edit path below can write a manual English translation.
+                let mut values = base_values(&marker);
+                values.source_language = "zh".to_string();
+                values.category = normalize_category(Some(&proposal.category))?;
+                values.categories = proposal.categories.clone();
+                values.opening_hours_note = proposal.opening_hours_note.clone();
+                values.is_public = proposal.is_public;
+                values.is_active = proposal.is_active;
+                values.open_time_start = proposal.open_time_start.clone();
+                values.open_time_end = proposal.open_time_end.clone();
+                values.venue_type = proposal.venue_type.clone();
+                values.review_status = "APPROVED".to_string();
+                values.last_edited_by = Some(proposal.proposer_username.clone());
+                values.last_edited_by_public_id = proposal.proposer_public_id.clone();
+                values.last_edited_by_owner = proposal.proposer_is_owner;
+                values.title = proposal.title.clone();
+                values.description = proposal.description.clone();
+                (
+                    write_marker_fields(&mut tx, marker.id, values).await?,
+                    "approve",
+                )
+            }
+        };
+        update_proposal_status(&mut tx, proposal_id, "APPROVED", &actor.username, None).await?;
+        record_event(
+            &mut tx,
+            &actor.public_id,
+            &actor.username,
+            action,
+            "edit",
+            proposal_id,
+            Some(updated.id),
+            None,
+        )
+        .await
+        .map_err(|error| log_db_error(&error))?;
         tx.commit().await.map_err(|error| log_db_error(&error))?;
         self.invalidate_after_commit().await;
         Ok(updated)
     }
 
-    /// `POST /api/admin/markers/edit-proposals/{id}/reject`：一次性把 `PENDING` 提案置驳回。
+    /// `POST /api/admin/markers/edit-proposals/{id}/reject`（无请求体）。
     pub async fn reject_edit_proposal(
         &self,
         actor: &Actor,
         proposal_id: i64,
     ) -> Result<(), WriteError> {
+        self.reject_edit_proposal_with_reason(actor, proposal_id, None)
+            .await
+    }
+
+    /// `POST /api/admin/markers/edit-proposals/{id}/reject`：可选拒绝理由。
+    pub async fn reject_edit_proposal_with_reason(
+        &self,
+        actor: &Actor,
+        proposal_id: i64,
+        reason: Option<&str>,
+    ) -> Result<(), WriteError> {
         ensure_admin(actor)?;
+        let note = normalize_review_note(reason)
+            .map_err(|message| WriteError::BadRequest(message.to_string()))?;
         let mut tx = self
             .pool
             .begin()
@@ -511,7 +701,26 @@ impl MarkerWriteService {
                 MSG_PROPOSAL_ALREADY_HANDLED.to_string(),
             ));
         }
-        update_proposal_status(&mut tx, proposal_id, "REJECTED", &actor.username).await?;
+        update_proposal_status(
+            &mut tx,
+            proposal_id,
+            "REJECTED",
+            &actor.username,
+            note.as_deref(),
+        )
+        .await?;
+        record_event(
+            &mut tx,
+            &actor.public_id,
+            &actor.username,
+            "reject",
+            "edit",
+            proposal_id,
+            Some(proposal.marker_id),
+            note.as_deref(),
+        )
+        .await
+        .map_err(|error| log_db_error(&error))?;
         tx.commit().await.map_err(|error| log_db_error(&error))?;
         Ok(())
     }
@@ -534,73 +743,19 @@ impl MarkerWriteService {
         let Some(marker) = marker else {
             return Err(WriteError::NotFound(MSG_MARKER_NOT_FOUND.to_string()));
         };
-        let categories = resolve_categories(
-            req.categories.as_deref(),
-            req.category.as_deref(),
-            &marker.categories,
-        )?;
-        let category = categories[0].clone();
-        let opening_hours_note = resolve_hours_note(
-            req.opening_hours_note.as_deref(),
-            marker.opening_hours_note.as_deref(),
-        )?;
-        // 管理员直编与公开提案同一口径：显式携带的标题不得为空白；省略时保留原值。
-        if req
-            .title
-            .as_deref()
-            .is_some_and(|title| title.trim().is_empty())
-        {
-            return Err(WriteError::BadRequest("title 不能为空".to_string()));
-        }
-        let text = resolve_edit_text(
+        let updated = apply_update_locked(&mut tx, &marker, request_language, req, None).await?;
+        record_event(
             &mut tx,
-            &marker,
-            req.title.as_deref(),
-            req.description.as_deref(),
-            req.language.as_deref(),
-            request_language,
+            &actor.public_id,
+            &actor.username,
+            "edit",
+            "marker",
+            marker_id,
+            Some(marker_id),
+            None,
         )
-        .await?;
-        let target = normalize(Some(&text.language)).to_string();
-        let source_edit = target == normalize(Some(&marker.source_language));
-        let (open_time_start, open_time_end) =
-            if req.open_time_start.is_some() || req.open_time_end.is_some() {
-                resolve_open_window(req.open_time_start.as_deref(), req.open_time_end.as_deref())?
-            } else {
-                (marker.open_time_start.clone(), marker.open_time_end.clone())
-            };
-
-        let venue_type = resolve_venue_type_update(
-            venue_category(&categories),
-            req.venue_type.as_deref(),
-            marker.venue_type.as_deref(),
-        )?;
-        let mut values = base_values(&marker);
-        values.category = category;
-        values.categories = categories;
-        values.opening_hours_note = opening_hours_note;
-        values.is_public = req.is_public.unwrap_or(marker.is_public);
-        values.is_active = req.is_active.unwrap_or(marker.is_active);
-        values.open_time_start = open_time_start;
-        values.open_time_end = open_time_end;
-        values.venue_type = venue_type;
-        values.review_status = "APPROVED".to_string();
-        if source_edit {
-            values.title = text.title.clone();
-            values.description = text.description.clone();
-        }
-        let updated = write_marker_fields(&mut tx, marker.id, values).await?;
-        if !source_edit {
-            upsert_translation(
-                &mut tx,
-                updated.id,
-                &target,
-                &text.title,
-                text.description.as_deref(),
-                &source_hash(&updated),
-            )
-            .await?;
-        }
+        .await
+        .map_err(|error| log_db_error(&error))?;
         tx.commit().await.map_err(|error| log_db_error(&error))?;
         self.invalidate_after_commit().await;
         Ok(updated)
@@ -623,6 +778,18 @@ impl MarkerWriteService {
             return Err(WriteError::NotFound(MSG_MARKER_NOT_FOUND.to_string()));
         }
         set_deactivated(&mut tx, marker_id, true).await?;
+        record_event(
+            &mut tx,
+            &actor.public_id,
+            &actor.username,
+            "deactivate",
+            "marker",
+            marker_id,
+            Some(marker_id),
+            None,
+        )
+        .await
+        .map_err(|error| log_db_error(&error))?;
         tx.commit().await.map_err(|error| log_db_error(&error))?;
         self.invalidate_after_commit().await;
         Ok(())
@@ -644,6 +811,19 @@ impl MarkerWriteService {
             return Err(WriteError::NotFound(MSG_MARKER_NOT_FOUND.to_string()));
         }
         set_deactivated(&mut tx, marker_id, false).await?;
+        set_marker_review_note(&mut tx, marker_id, None).await?;
+        record_event(
+            &mut tx,
+            &actor.public_id,
+            &actor.username,
+            "restore",
+            "marker",
+            marker_id,
+            Some(marker_id),
+            None,
+        )
+        .await
+        .map_err(|error| log_db_error(&error))?;
         tx.commit().await.map_err(|error| log_db_error(&error))?;
         self.invalidate_after_commit().await;
         Ok(())
@@ -668,6 +848,200 @@ impl MarkerWriteService {
         .fetch_all(&self.pool)
         .await
         .map_err(|error| log_db_error(&error))
+    }
+
+    /// `GET /api/admin/markers/search`：服务端分页搜索全部点位。
+    pub async fn search_markers(
+        &self,
+        actor: &Actor,
+        query: &MarkerSearchQuery,
+    ) -> Result<(i64, Vec<AdminMarkerRow>), WriteError> {
+        ensure_admin(actor)?;
+        if let Some(status) = query.status.as_deref()
+            && !matches!(status, "PENDING" | "APPROVED" | "REJECTED")
+        {
+            return Err(WriteError::BadRequest("status 不合法".to_string()));
+        }
+        if !matches!(
+            query.sort.as_str(),
+            "updated_desc" | "created_desc" | "created_asc"
+        ) {
+            return Err(WriteError::BadRequest("sort 不合法".to_string()));
+        }
+        let category = match query.category.as_deref() {
+            Some(value) if !value.trim().is_empty() => Some(normalize_category(Some(value))?),
+            _ => None,
+        };
+        let trimmed = query.q.trim();
+        let pattern = if trimmed.is_empty() {
+            None
+        } else {
+            Some(format!("%{}%", escape_like(trimmed)))
+        };
+        let numeric_id =
+            if !trimmed.is_empty() && trimmed.chars().all(|character| character.is_ascii_digit()) {
+                trimmed.parse::<i64>().ok()
+            } else {
+                None
+            };
+
+        let total: i64 = sqlx::query_file_scalar!(
+            "src/modules/markers/sql/admin_search_markers_count.sql",
+            pattern.as_deref(),
+            numeric_id,
+            query.status.as_deref(),
+            category.as_deref(),
+            query.deactivated,
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|error| log_db_error(&error))?
+        .unwrap_or(0);
+        let offset = query.page.saturating_mul(query.size);
+        let rows = sqlx::query_file_as!(
+            MarkerRow,
+            "src/modules/markers/sql/admin_search_markers.sql",
+            pattern.as_deref(),
+            numeric_id,
+            query.status.as_deref(),
+            category.as_deref(),
+            query.deactivated,
+            query.sort.as_str(),
+            query.size,
+            offset,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| log_db_error(&error))?;
+        let ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
+        let review_notes = sqlx::query_file_as!(
+            ReviewNoteRow,
+            "src/modules/markers/sql/admin_search_review_notes.sql",
+            &ids,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| log_db_error(&error))?;
+        let review_notes: std::collections::HashMap<i64, Option<String>> = review_notes
+            .into_iter()
+            .map(|row| (row.id, row.review_note))
+            .collect();
+        let rows = rows
+            .into_iter()
+            .map(|marker| AdminMarkerRow {
+                review_note: review_notes.get(&marker.id).cloned().flatten(),
+                marker,
+            })
+            .collect();
+        Ok((total, rows))
+    }
+
+    /// `GET /api/admin/moderation/events`：审核记录，按时间倒序。
+    pub async fn moderation_events(
+        &self,
+        actor: &Actor,
+        marker_id: Option<i64>,
+        page: i64,
+        size: i64,
+    ) -> Result<(i64, Vec<ModerationEventDto>), WriteError> {
+        ensure_admin(actor)?;
+        let total: i64 = sqlx::query_file_scalar!(
+            "src/modules/markers/sql/count_moderation_events.sql",
+            marker_id,
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|error| log_db_error(&error))?
+        .unwrap_or(0);
+        let offset = page.saturating_mul(size);
+        let rows = sqlx::query_file_as!(
+            ModerationEventDto,
+            "src/modules/markers/sql/list_moderation_events.sql",
+            marker_id,
+            size,
+            offset,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| log_db_error(&error))?;
+        Ok((total, rows))
+    }
+
+    /// `GET /api/markers/me/submissions`：当前用户自己的提交（三类合并）。
+    pub async fn my_submissions(&self, actor: &Actor) -> Result<Vec<SubmissionDto>, WriteError> {
+        let mut items = Vec::new();
+        for row in sqlx::query_file_as!(
+            MySubmissionRow,
+            "src/modules/markers/sql/my_submission_markers.sql",
+            actor.public_id.as_str(),
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| log_db_error(&error))?
+        {
+            items.push(SubmissionDto {
+                kind: "marker".to_string(),
+                id: row.id,
+                marker_id: row.id,
+                marker_title: row.marker_title,
+                status: row.status,
+                review_note: row.review_note,
+                created_at: row.created_at,
+                reviewed_at: row.reviewed_at,
+                image_url: None,
+            });
+        }
+        for row in sqlx::query_file_as!(
+            MySubmissionRow,
+            "src/modules/markers/sql/my_submission_edits.sql",
+            actor.public_id.as_str(),
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| log_db_error(&error))?
+        {
+            items.push(SubmissionDto {
+                kind: "edit".to_string(),
+                id: row.id,
+                marker_id: row.marker_id,
+                marker_title: row.marker_title,
+                status: row.status,
+                review_note: row.review_note,
+                created_at: row.created_at,
+                reviewed_at: row.reviewed_at,
+                image_url: None,
+            });
+        }
+        for row in sqlx::query_file_as!(
+            MySubmissionImageRow,
+            "src/modules/markers/sql/my_submission_images.sql",
+            actor.public_id.as_str(),
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| log_db_error(&error))?
+        {
+            items.push(SubmissionDto {
+                kind: "image".to_string(),
+                id: row.id,
+                marker_id: row.marker_id,
+                marker_title: row.marker_title,
+                status: row.status,
+                review_note: row.review_note,
+                created_at: row.created_at,
+                reviewed_at: row.reviewed_at,
+                image_url: Some(row.image_url),
+            });
+        }
+        items.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| left.kind.cmp(&right.kind))
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        items.truncate(200);
+        Ok(items)
     }
 
     /// `GET /api/markers/me/favorites`：可见收藏点位 ID（按收藏顺序）。
@@ -1024,6 +1398,121 @@ async fn content_snapshot(
     }))
 }
 
+/// 管理员直接编辑与“先改再通过”共用的校验/写入逻辑（调用方已锁定点位）。
+async fn apply_update_locked(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    marker: &MarkerRow,
+    request_language: &str,
+    req: MarkerUpdateRequest,
+    attribution: Option<Attribution<'_>>,
+) -> Result<MarkerRow, WriteError> {
+    let categories = resolve_categories(
+        req.categories.as_deref(),
+        req.category.as_deref(),
+        &marker.categories,
+    )?;
+    let category = categories[0].clone();
+    let opening_hours_note = resolve_hours_note(
+        req.opening_hours_note.as_deref(),
+        marker.opening_hours_note.as_deref(),
+    )?;
+    // 管理员直编与公开提案同一口径：显式携带的标题不得为空白；省略时保留原值。
+    if req
+        .title
+        .as_deref()
+        .is_some_and(|title| title.trim().is_empty())
+    {
+        return Err(WriteError::BadRequest("title 不能为空".to_string()));
+    }
+    let text = resolve_edit_text(
+        tx,
+        marker,
+        req.title.as_deref(),
+        req.description.as_deref(),
+        req.language.as_deref(),
+        request_language,
+    )
+    .await?;
+    let target = normalize(Some(&text.language)).to_string();
+    let source_edit = target == normalize(Some(&marker.source_language));
+    let (open_time_start, open_time_end) =
+        if req.open_time_start.is_some() || req.open_time_end.is_some() {
+            resolve_open_window(req.open_time_start.as_deref(), req.open_time_end.as_deref())?
+        } else {
+            (marker.open_time_start.clone(), marker.open_time_end.clone())
+        };
+
+    let venue_type = resolve_venue_type_update(
+        venue_category(&categories),
+        req.venue_type.as_deref(),
+        marker.venue_type.as_deref(),
+    )?;
+    let mut values = base_values(marker);
+    values.category = category;
+    values.categories = categories;
+    values.opening_hours_note = opening_hours_note;
+    values.is_public = req.is_public.unwrap_or(marker.is_public);
+    values.is_active = req.is_active.unwrap_or(marker.is_active);
+    values.open_time_start = open_time_start;
+    values.open_time_end = open_time_end;
+    values.venue_type = venue_type;
+    values.review_status = "APPROVED".to_string();
+    if let Some(attribution) = attribution {
+        values.last_edited_by = Some(attribution.username.to_string());
+        values.last_edited_by_public_id = attribution.public_id.map(str::to_string);
+        values.last_edited_by_owner = attribution.is_owner;
+    }
+    if source_edit {
+        values.title = text.title.clone();
+        values.description = text.description.clone();
+    }
+    let updated = write_marker_fields(tx, marker.id, values).await?;
+    if !source_edit {
+        upsert_translation(
+            tx,
+            updated.id,
+            &target,
+            &text.title,
+            text.description.as_deref(),
+            &source_hash(&updated),
+        )
+        .await?;
+    }
+    Ok(updated)
+}
+
+/// 以点位元数据 + 提案内容构造校验基线，供“以提案为基础先改再通过”复用。
+fn proposal_as_marker(marker: &MarkerRow, proposal: &EditProposalRow) -> MarkerRow {
+    MarkerRow {
+        id: marker.id,
+        version: marker.version,
+        lat: marker.lat,
+        lng: marker.lng,
+        category: proposal.category.clone(),
+        title: proposal.title.clone(),
+        description: proposal.description.clone(),
+        source_language: "zh".to_string(),
+        is_public: proposal.is_public,
+        username: marker.username.clone(),
+        user_public_id: marker.user_public_id.clone(),
+        client_request_id: marker.client_request_id.clone(),
+        is_active: proposal.is_active,
+        open_time_start: proposal.open_time_start.clone(),
+        open_time_end: proposal.open_time_end.clone(),
+        review_status: marker.review_status.clone(),
+        last_edited_by: marker.last_edited_by.clone(),
+        last_edited_by_public_id: marker.last_edited_by_public_id.clone(),
+        last_edited_by_owner: marker.last_edited_by_owner,
+        mark_image: marker.mark_image.clone(),
+        venue_type: proposal.venue_type.clone(),
+        categories: proposal.categories.clone(),
+        opening_hours_note: proposal.opening_hours_note.clone(),
+        deactivated: marker.deactivated,
+        created_at: marker.created_at,
+        updated_at: marker.updated_at,
+    }
+}
+
 fn base_values(marker: &MarkerRow) -> MarkerValues {
     MarkerValues {
         category: marker.category.clone(),
@@ -1174,6 +1663,7 @@ async fn update_proposal_status(
     proposal_id: i64,
     status: &str,
     reviewer: &str,
+    review_note: Option<&str>,
 ) -> Result<(), WriteError> {
     sqlx::query_file!(
         "src/modules/markers/sql/update_proposal_status.sql",
@@ -1181,6 +1671,7 @@ async fn update_proposal_status(
         status,
         reviewer,
         chrono::Utc::now(),
+        review_note,
     )
     .execute(&mut **tx)
     .await
@@ -1197,6 +1688,22 @@ async fn set_deactivated(
         "src/modules/markers/sql/set_deactivated.sql",
         marker_id,
         deactivated
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| log_db_error(&error))?;
+    Ok(())
+}
+
+async fn set_marker_review_note(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    marker_id: i64,
+    review_note: Option<&str>,
+) -> Result<(), WriteError> {
+    sqlx::query_file!(
+        "src/modules/markers/sql/set_marker_review_note.sql",
+        marker_id,
+        review_note,
     )
     .execute(&mut **tx)
     .await

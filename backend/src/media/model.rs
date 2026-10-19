@@ -8,12 +8,27 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use crate::modules::markers::model::MarkerRow;
+use crate::modules::markers::moderation::ProposerSubmissionStats;
 
 /// 管理员待审图片提案清单项，字段与 Java `/api/admin/markers/pending-images` 一致
-/// （8 项，camelCase，`createdAt` 降序）。
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+/// （8 项，camelCase，`createdAt` 降序），并补充提交者统计。
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingImageItem {
+    pub id: i64,
+    pub marker_id: i64,
+    pub marker_title: String,
+    pub proposer_username: String,
+    pub proposer_public_id: Option<String>,
+    pub image_url: String,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub proposer_submission_stats: ProposerSubmissionStats,
+}
+
+/// `pending_images.sql` 的原始行；统计由服务层批量补充。
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PendingImageRow {
     pub id: i64,
     pub marker_id: i64,
     pub marker_title: String,

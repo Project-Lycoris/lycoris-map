@@ -9,6 +9,7 @@ pub mod cache;
 pub mod http;
 pub mod localization;
 pub mod model;
+pub mod moderation;
 pub mod repository;
 pub mod service;
 pub mod write;

@@ -62,8 +62,8 @@ const MARKER_KEYS: [&str; 29] = [
     "updatedAt",
 ];
 
-/// `pending-edits` 的 19 个字段。
-const EDIT_PROPOSAL_KEYS: [&str; 21] = [
+/// `pending-edits` 的字段（含新增提交者统计）。
+const EDIT_PROPOSAL_KEYS: [&str; 22] = [
     "id",
     "markerId",
     "markerTitle",
@@ -85,6 +85,7 @@ const EDIT_PROPOSAL_KEYS: [&str; 21] = [
     "proposerIsOwner",
     "status",
     "createdAt",
+    "proposerSubmissionStats",
 ];
 
 struct Env {
@@ -336,6 +337,17 @@ fn assert_marker_shape(value: &Value) {
         sorted_keys(value),
         expected,
         "Marker 字段与契约不一致: {value}"
+    );
+}
+
+fn assert_pending_marker_shape(value: &Value) {
+    let mut expected: Vec<String> = MARKER_KEYS.iter().map(|key| key.to_string()).collect();
+    expected.push("proposerSubmissionStats".to_string());
+    expected.sort();
+    assert_eq!(
+        sorted_keys(value),
+        expected,
+        "待审 Marker 字段与契约不一致: {value}"
     );
 }
 
@@ -971,7 +983,7 @@ async fn admin_pending_all_reject_and_translation_invalidation() {
     assert_vary(pending.headers());
     let pending_json = pending.json();
     assert_eq!(pending_json.as_array().unwrap().len(), 1);
-    assert_marker_shape(&pending_json[0]);
+    assert_pending_marker_shape(&pending_json[0]);
     assert_eq!(id_of(&pending_json[0]), pending_id);
     assert_eq!(pending_json[0]["reviewStatus"], "PENDING");
 

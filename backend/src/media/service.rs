@@ -27,6 +27,7 @@ use crate::media::repository::MediaRepository;
 use crate::media::storage::{ImageStore, MediaDirectory, MediaError, OpenedImage};
 use crate::modules::markers::cache::MarkerCache;
 use crate::modules::markers::model::{MarkerRow, Viewer, can_view};
+use crate::modules::markers::moderation::{normalize_review_note, proposer_stats, record_event};
 
 /// 提交后缓存失效的最长等待；超时按“缓存不可用”处理，不影响已提交写入。
 const CACHE_INVALIDATE_TIMEOUT: Duration = Duration::from_millis(500);
@@ -352,10 +353,40 @@ impl MediaService {
         viewer: &Viewer<'_>,
     ) -> Result<Vec<PendingImageItem>, MediaServiceError> {
         require_admin(viewer)?;
-        self.repo
+        let rows = self
+            .repo
             .pending_images()
             .await
-            .map_err(|error| db_error("查询待审图片提案", error))
+            .map_err(|error| db_error("查询待审图片提案", error))?;
+        let public_ids: Vec<String> = rows
+            .iter()
+            .filter_map(|item| item.proposer_public_id.clone())
+            .collect();
+        let stats = proposer_stats(self.repo.pool(), &public_ids)
+            .await
+            .map_err(|error| db_error("查询提交者统计", error))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                let proposer_submission_stats = row
+                    .proposer_public_id
+                    .as_deref()
+                    .and_then(|public_id| stats.get(public_id))
+                    .copied()
+                    .unwrap_or_default();
+                PendingImageItem {
+                    id: row.id,
+                    marker_id: row.marker_id,
+                    marker_title: row.marker_title,
+                    proposer_username: row.proposer_username,
+                    proposer_public_id: row.proposer_public_id,
+                    image_url: row.image_url,
+                    status: row.status,
+                    created_at: row.created_at,
+                    proposer_submission_stats,
+                }
+            })
+            .collect())
     }
 
     /// 审批图片提案：同事务锁提案（`PENDING`）、锁并更新关联点位、写审核信息后提交。
@@ -426,6 +457,19 @@ impl MediaService {
         if affected != 1 {
             return Err(MediaServiceError::Conflict("该提案已处理".to_string()));
         }
+        let actor_public_id = viewer.public_id.ok_or(MediaServiceError::Unauthorized)?;
+        record_event(
+            &mut transaction,
+            actor_public_id,
+            reviewer_username,
+            "approve",
+            "image",
+            proposal.id,
+            Some(proposal.marker_id),
+            None,
+        )
+        .await
+        .map_err(|error| db_error("写入图片通过事件", error))?;
 
         transaction
             .commit()
@@ -435,16 +479,31 @@ impl MediaService {
         Ok(updated)
     }
 
-    /// 拒绝图片提案：同事务锁提案（`PENDING`）后一次性置为 `REJECTED`。
-    ///
-    /// 与审批不同，拒绝**不要求关联点位存在**，也不改动点位或缓存。
+    /// 拒绝图片提案（无请求体，兼容旧客户端）。
     pub async fn reject_image_proposal(
         &self,
         proposal_id: i64,
         viewer: &Viewer<'_>,
         reviewer_username: &str,
     ) -> Result<(), MediaServiceError> {
+        self.reject_image_proposal_with_reason(proposal_id, viewer, reviewer_username, None)
+            .await
+    }
+
+    /// 拒绝图片提案：同事务锁提案（`PENDING`）后一次性置为 `REJECTED`。
+    ///
+    /// 与审批不同，拒绝**不要求关联点位存在**，也不改动点位或缓存；可选理由写入
+    /// `review_note` 并记录审核事件。
+    pub async fn reject_image_proposal_with_reason(
+        &self,
+        proposal_id: i64,
+        viewer: &Viewer<'_>,
+        reviewer_username: &str,
+        reason: Option<&str>,
+    ) -> Result<(), MediaServiceError> {
         require_admin(viewer)?;
+        let note = normalize_review_note(reason)
+            .map_err(|message| MediaServiceError::BadRequest(message.to_string()))?;
         let mut transaction = self
             .repo
             .pool()
@@ -466,12 +525,30 @@ impl MediaService {
 
         let affected = self
             .repo
-            .reject_image_proposal(&mut transaction, reviewer_username, proposal_id)
+            .reject_image_proposal(
+                &mut transaction,
+                reviewer_username,
+                proposal_id,
+                note.as_deref(),
+            )
             .await
             .map_err(|error| db_error("更新图片提案状态", error))?;
         if affected != 1 {
             return Err(MediaServiceError::Conflict("该提案已处理".to_string()));
         }
+        let actor_public_id = viewer.public_id.ok_or(MediaServiceError::Unauthorized)?;
+        record_event(
+            &mut transaction,
+            actor_public_id,
+            reviewer_username,
+            "reject",
+            "image",
+            proposal.id,
+            Some(proposal.marker_id),
+            note.as_deref(),
+        )
+        .await
+        .map_err(|error| db_error("写入图片拒绝事件", error))?;
 
         transaction
             .commit()
