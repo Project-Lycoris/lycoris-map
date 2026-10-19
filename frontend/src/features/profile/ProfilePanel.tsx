@@ -1,4 +1,5 @@
 import { DraftList } from '@/features/contributions/DraftList'
+import { MySubmissions } from './MySubmissions'
 import { AdminEntry } from '@/features/admin/AdminEntry'
 import { useUi } from '@/shared/i18n/ui'
 import { useRef, useState, type FormEvent } from 'react'
@@ -321,6 +322,7 @@ export function MyPlacesPanel({
     return (
         <div className="profile-content created-places">
             <DraftList />
+            <MySubmissions />
             <ReadMessage
                 state={{
                     pending: query.isPending,
