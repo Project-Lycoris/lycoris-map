@@ -7,10 +7,12 @@
 
 mod common;
 
+use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
+use axum::extract::ConnectInfo;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, header};
 use axum::response::Response;
 use common::{TempDatabase, connect_redis, test_redis_url, unique_cache_namespace};
@@ -395,6 +397,10 @@ async fn send(
             HeaderValue::from_str(value).unwrap(),
         );
     }
+    request.extensions_mut().insert(ConnectInfo(SocketAddr::new(
+        IpAddr::from([127, 0, 0, 1]),
+        51234,
+    )));
     let response = env
         .router
         .clone()

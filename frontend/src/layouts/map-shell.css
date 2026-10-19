@@ -380,7 +380,9 @@
     font-family: var(--ui-font-body);
 }
 .map-shell .leaflet-control-attribution {
-    font: 11px/1.4 var(--ui-font-body);
+    max-width: calc(100vw - 10px);
+    font: 11px/14px var(--ui-font-body);
+    text-align: right;
 }
 .language-options {
     position: absolute;

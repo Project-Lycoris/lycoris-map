@@ -291,6 +291,52 @@ it('sends a code, prevents immediate resend and reports a server cooldown', asyn
     expect(screen.getByRole('button', { name: /Resend in/ })).toBeDisabled()
     expect(screen.getByLabelText('Verification Code')).toBeDisabled()
 })
+it('shows the login rate limit and disables sign-in until the countdown ends', async () => {
+    const loginCall = vi.spyOn(api, 'login').mockRejectedValue(
+        new ApiError(429, 'Too many sign-in attempts. Try again later.', {
+            code: 42933,
+            body: JSON.stringify({ data: { retryAfterSeconds: 2 } }),
+        }),
+    )
+    setup()
+    await openAccount()
+    login()
+    await waitFor(() => expect(loginCall).toHaveBeenCalled())
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Too many sign-in attempts. Try again later.',
+    )
+    expect(screen.getByRole('button', { name: /Try again in \d+s/ })).toBeDisabled()
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Login$/ })).toBeEnabled(), {
+        timeout: 4000,
+    })
+})
+it('uses retryAfterSeconds from a real transport 429 response', async () => {
+    vi.mocked(api.login).mockRestore()
+    vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: RequestInfo | URL) => {
+            if (String(input).includes('/api/login'))
+                return new Response(
+                    JSON.stringify({
+                        code: 42933,
+                        message: 'Too many sign-in attempts. Try again later.',
+                        data: { retryAfterSeconds: 7 },
+                    }),
+                    { status: 429, headers: { 'content-type': 'application/json' } },
+                )
+            return new Response('', { status: 404 })
+        }),
+    )
+    setup()
+    await openAccount()
+    login()
+    // The countdown comes from the transport-populated `ApiError.body`, not the
+    // 60-second fallback.
+    expect(await screen.findByRole('button', { name: 'Try again in 7s' })).toBeDisabled()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+        'Too many sign-in attempts. Try again later.',
+    )
+})
 it('finishes password recovery then returns to login without signing in', async () => {
     const reset = vi.spyOn(api, 'resetPassword').mockResolvedValue(undefined)
     vi.spyOn(api, 'sendEmailCode').mockResolvedValue(undefined)

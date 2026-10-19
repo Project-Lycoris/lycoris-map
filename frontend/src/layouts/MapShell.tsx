@@ -656,6 +656,9 @@ export function MapShell({
                         }
                     />
                 )}
+                {browse?.state.loading && (
+                    <MapNotice key="places-loading" message="Loading places…" />
+                )}
                 {browse && (browse.state.error || browse.detailState.error) && (
                     <MapNotice
                         key={`places:${browse.detailState.error || browse.state.error}`}

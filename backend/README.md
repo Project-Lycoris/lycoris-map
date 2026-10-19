@@ -32,6 +32,8 @@ The API listens on `127.0.0.1:8080` by default. `/health/live` checks the proces
 
 Registration and password recovery require SMTP plus an independent `EMAIL_VERIFICATION_SECRET`. Without mail configuration, the API rejects code requests rather than allowing unverified registration. See [email verification](deploy/production/EMAIL_VERIFICATION.md).
 
+Failed sign-ins are rate limited by two counters sharing one window: per client IP and normalized account (`LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT`, default 10) and per client IP (`LOGIN_RATE_LIMIT_MAX_PER_IP`, default 30), over `LOGIN_RATE_LIMIT_WINDOW_SECONDS` (default 900). Only failed credentials count; a successful sign-in clears the account counter. Exceeding a limit returns `429` with `Retry-After` and `data.retryAfterSeconds`. See [.env.example](.env.example) for all settings.
+
 ## Administration
 
 Admin endpoints authorize the current database role `ADMIN` on every request. Account login is the only credential required. The retired `ADMIN_SECOND_FACTOR_ENABLED`, `ADMIN_SECOND_PASSWORD_HASH`, and `SECOND_FACTOR_TTL_SECONDS` settings are ignored; existing environment files and sessions need no migration. `/api/admin/verify` remains a role-checked compatibility endpoint for cached clients.
@@ -94,4 +96,4 @@ Build the runtime image from `backend/`:
 docker build --target runtime -t lycoris-backend:local .
 ```
 
-The runtime runs as a non-root user. Keep uploads on a writable persistent volume, and keep credentials outside the image. `compose.release.yml` is for local container checks; [production configuration](deploy/production/README.md) covers the live stack, HTTPS, migrations, and backups.
+The runtime runs as a non-root user. Keep uploads on a writable persistent volume, and keep credentials outside the image. `compose.release.yml` is for local container checks; [Shanghai production configuration](deploy/shanghai/README.md) covers the shared backend for both websites, HTTPS, migrations, and backups.

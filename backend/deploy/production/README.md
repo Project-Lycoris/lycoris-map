@@ -1,4 +1,8 @@
-# Backend deployment
+# Previous backend deployment
+
+Production moved to [Shanghai](../shanghai/README.md) on 2026-10-08. This directory
+retains the previous host's configuration and shared initialization helpers.
+Do not restart its application or use its historical database for a new release.
 
 This Compose stack runs the Rust API, PostgreSQL/PostGIS, Redis, and Caddy. The API binds to loopback port `18081`; Caddy serves `https://api.lycoris-map.com`. PostgreSQL and Redis bind only to loopback on `15432` and `16379`.
 

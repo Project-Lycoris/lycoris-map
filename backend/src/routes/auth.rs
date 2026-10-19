@@ -3,13 +3,14 @@
 use std::net::SocketAddr;
 
 use axum::extract::{ConnectInfo, State};
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::Response;
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use serde_json::Value;
 
 use crate::app::AppState;
 use crate::auth::CurrentUser;
 use crate::dto::{ChangePasswordRequest, LoginRequest, RegisterRequest, UpdateProfileRequest};
+use crate::error::ApiResponse;
 use crate::password::{self, HashError};
 use crate::ratelimit::RateLimitOutcome;
 use crate::session::{NewSession, TransitionState};
@@ -37,10 +38,32 @@ fn register_rejected() -> Response {
     )
 }
 
+/// 429 响应：`ApiResponse { code, message, data: {retryAfterSeconds} }` 并带 `Retry-After` 头。
+///
+/// 与 `routes/email.rs` 的验证码限流形状一致；注册沿用既有中文文案与 code 429，
+/// 登录使用独立的 code 42933，避免影响既有客户端。
+fn too_many_requests(code: i32, message: &str, retry_after_seconds: i64) -> Response {
+    let retry_after_seconds = retry_after_seconds.max(1);
+    let mut response = (
+        StatusCode::TOO_MANY_REQUESTS,
+        axum::Json(ApiResponse {
+            code,
+            message: message.to_string(),
+            data: serde_json::json!({ "retryAfterSeconds": retry_after_seconds }),
+        }),
+    )
+        .into_response();
+    if let Ok(value) = HeaderValue::from_str(&retry_after_seconds.to_string()) {
+        response.headers_mut().insert(header::RETRY_AFTER, value);
+    }
+    response
+}
+
 /// POST /api/login
 pub async fn login(
     State(state): State<AppState>,
     headers: HeaderMap,
+    connect: ConnectInfo<SocketAddr>,
     JsonBody(request): JsonBody<LoginRequest>,
 ) -> Response {
     let (Some(identity), Some(password)) = (request.username, request.password) else {
@@ -49,6 +72,24 @@ pub async fn login(
     let identity = identity.trim().to_string();
     if identity.is_empty() {
         return invalid_credentials();
+    }
+
+    // 校验密码前原子预占一个名额（“IP+账号”与“IP”两个计数器）；任一已达上限直接 429，
+    // 不再进入数据库查询与 bcrypt 比对。预占在同一个 Lua 内完成，并发突发无法越过上限。
+    // Redis 故障 fail closed。
+    let ip = super::client_ip(&state, Some(connect), &headers);
+    match state.login_rate_limiter.acquire(ip, &identity).await {
+        RateLimitOutcome::Allowed => {}
+        RateLimitOutcome::Limited {
+            retry_after_seconds,
+        } => {
+            return too_many_requests(
+                42933,
+                "Too many sign-in attempts. Try again later.",
+                retry_after_seconds,
+            );
+        }
+        RateLimitOutcome::Unavailable => return web::unavailable(),
     }
 
     let candidates = users::find_active_by_identity(&state.db, &identity).await;
@@ -87,6 +128,10 @@ pub async fn login(
         }
     }
 
+    // 凭据正确：成功登录不消耗额度，归还本次预占（删除“IP+账号”计数并把 IP 计数减一）；
+    // 归还失败只记录，不影响已通过的登录。
+    state.login_rate_limiter.release(ip, &identity).await;
+
     let old_token = web::session_token(&headers, &state.config.session_cookie_name);
     let session = NewSession {
         user_id: user.id,
@@ -121,12 +166,11 @@ pub async fn register(
     let ip = super::client_ip(&state, Some(connect), &headers);
     match state.rate_limiter.try_acquire(ip).await {
         RateLimitOutcome::Allowed => {}
-        RateLimitOutcome::Limited => {
-            return web::api_error(
-                StatusCode::TOO_MANY_REQUESTS,
-                429,
-                "请求过于频繁，请稍后再试",
-            );
+        RateLimitOutcome::Limited {
+            retry_after_seconds,
+        } => {
+            // 保持原有 code 429 与中文文案；补上 Retry-After 与剩余秒数。
+            return too_many_requests(429, "请求过于频繁，请稍后再试", retry_after_seconds);
         }
         RateLimitOutcome::Unavailable => return web::unavailable(),
     }
