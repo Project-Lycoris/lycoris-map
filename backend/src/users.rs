@@ -316,13 +316,39 @@ pub async fn search_for_admin(
     page: i64,
     size: i64,
 ) -> Result<(i64, Vec<UserRow>), sqlx::Error> {
-    let total: i64 = sqlx::query_file_scalar!("queries/admin_users_count.sql", q)
-        .fetch_one(pool)
-        .await?
-        .unwrap_or(0);
+    let trimmed = q.trim();
+    let pattern = if trimmed.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "%{}%",
+            crate::modules::markers::moderation::escape_like(trimmed)
+        ))
+    };
+    let numeric_id =
+        if !trimmed.is_empty() && trimmed.chars().all(|character| character.is_ascii_digit()) {
+            trimmed.parse::<i64>().ok()
+        } else {
+            None
+        };
+    let total: i64 = sqlx::query_file_scalar!(
+        "queries/admin_users_count.sql",
+        pattern.as_deref(),
+        numeric_id
+    )
+    .fetch_one(pool)
+    .await?
+    .unwrap_or(0);
     let offset = page.saturating_mul(size);
-    let rows = sqlx::query_file_as!(UserRow, "queries/admin_users_page.sql", q, size, offset)
-        .fetch_all(pool)
-        .await?;
+    let rows = sqlx::query_file_as!(
+        UserRow,
+        "queries/admin_users_page.sql",
+        pattern.as_deref(),
+        numeric_id,
+        size,
+        offset,
+    )
+    .fetch_all(pool)
+    .await?;
     Ok((total, rows))
 }

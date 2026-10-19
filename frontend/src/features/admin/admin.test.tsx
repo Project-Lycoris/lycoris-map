@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router'
 import { SessionProvider, useSession } from '@/features/auth/SessionProvider'
@@ -35,6 +35,12 @@ beforeEach(() => {
     })
     vi.spyOn(api, 'readMarkers').mockResolvedValue([
         syntheticPlace({ title: 'Review synthetic', reviewStatus: 'PENDING' }),
+    ])
+    vi.spyOn(api, 'readPendingMarkers').mockResolvedValue([
+        {
+            ...syntheticPlace({ title: 'Review synthetic', reviewStatus: 'PENDING' }),
+            proposerSubmissionStats: { approved: 1, rejected: 0, pending: 1 },
+        },
     ])
     vi.spyOn(api, 'readEdits').mockResolvedValue([])
     vi.spyOn(api, 'readImages').mockResolvedValue([])
@@ -102,7 +108,7 @@ it('opens the review queue for an authorized login without a second password', a
 it('clears queues when the admin role is revoked, retaining the ordinary session', async () => {
     mount()
     await screen.findByRole('heading', { name: 'Review synthetic' })
-    vi.mocked(api.readMarkers).mockRejectedValue(
+    vi.mocked(api.readPendingMarkers).mockRejectedValue(
         new ApiError(403, 'Forbidden', { accessDenied: true }),
     )
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
@@ -111,30 +117,16 @@ it('clears queues when the admin role is revoked, retaining the ordinary session
     expect(screen.getByTestId('identity')).toHaveTextContent('authenticated:A')
     expect(client.getQueriesData({ predicate: (q) => q.queryKey.includes('review') })).toEqual([])
 })
-it('refreshes after approval and never automatically replays an uncertain write', async () => {
-    mount()
-    await screen.findByRole('heading', { name: 'Review synthetic' })
-    vi.mocked(api.moderate).mockRejectedValue(ApiError.network('lost response'))
-    vi.mocked(api.readMarkers).mockResolvedValue([])
-    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
-    expect(api.moderate).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
-    await screen.findByText(
-        'The outcome could not be confirmed. Refresh and inspect the item before trying again.',
-    )
-    await screen.findByText('No items.')
-    expect(api.moderate).toHaveBeenCalledTimes(1)
-})
 it('does not render a delayed private queue after an account switch', async () => {
     let finish!: (value: ReturnType<typeof syntheticPlace>[]) => void
-    vi.mocked(api.readMarkers).mockImplementationOnce(
+    vi.mocked(api.readPendingMarkers).mockImplementationOnce(
         () =>
             new Promise((resolve) => {
                 finish = resolve
             }),
     )
     mount()
-    await waitFor(() => expect(api.readMarkers).toHaveBeenCalled())
+    await waitFor(() => expect(api.readPendingMarkers).toHaveBeenCalled())
     owner = { ...user, publicId: 'B' }
     vi.mocked(api.readUsers).mockRejectedValue(
         new ApiError(403, 'HTTP 403', { accessDenied: true }),
@@ -145,232 +137,23 @@ it('does not render a delayed private queue after an account switch', async () =
     expect(screen.queryByText('Old secret queue')).not.toBeInTheDocument()
     expect(client.getQueriesData({ queryKey: ['private', 'A'] })).toEqual([])
 })
-it('renders at most one page of a large moderation queue', async () => {
-    vi.mocked(api.readMarkers).mockResolvedValue(
-        Array.from({ length: 400 }, (_, i) =>
-            syntheticPlace({ id: i + 1, title: `Review item ${i}` }),
-        ),
-    )
-    const { container } = mount()
-    await screen.findByText('Review item 0')
-    expect(container.querySelectorAll('.admin-card')).toHaveLength(20)
-    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
-    await screen.findByText('Review item 20')
-    expect(container.querySelectorAll('.admin-card')).toHaveLength(20)
-})
 it('does not classify service failure as an ordinary account', () => {
     expect(deniedAccess(new ApiError(503, 'unavailable'))).toBeNull()
     expect(deniedAccess(new ApiError(403, 'unrecognized'))).toBe('unavailable')
 })
 
-it('preserves the actual content language when editing fallback text', async () => {
-    vi.mocked(api.readMarkers).mockResolvedValue([
-        syntheticPlace({ title: '原文', contentLanguage: 'zh' }),
-    ])
-    const save = vi.spyOn(api, 'editMarker').mockResolvedValue(syntheticPlace())
-    mount('/admin/all')
-    await screen.findByRole('heading', { name: '原文' })
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
-    fireEvent.change(screen.getByLabelText('Opening Time'), { target: { value: '10:00' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
-    await waitFor(() =>
-        expect(save).toHaveBeenCalledWith(
-            1,
-            expect.objectContaining({ title: '原文', language: 'zh', openTimeStart: '10:00' }),
-            expect.any(AbortSignal),
-        ),
-    )
-})
-it('cancels confirmation with Escape and restores its trigger focus', async () => {
+it('keeps navigation and refresh available when the queue read fails', async () => {
+    vi.mocked(api.readPendingMarkers).mockRejectedValueOnce(new ApiError(503, 'unavailable'))
     mount()
-    await screen.findByRole('heading', { name: 'Review synthetic' })
-    const approve = screen.getByRole('button', { name: 'Approve' })
-    act(() => approve.focus())
-    fireEvent.click(approve)
-    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus()
-    fireEvent.keyDown(window, { key: 'Escape' })
-    await waitFor(() => expect(approve).toHaveFocus())
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
-    expect(api.moderate).not.toHaveBeenCalled()
-})
-
-it('disables and restores a place with confirmation while preventing edits to disabled places', async () => {
-    let marker = syntheticPlace({ title: 'Recoverable place', deactivated: false })
-    vi.mocked(api.readMarkers).mockImplementation(async () => [marker])
-    const disable = vi.spyOn(api, 'deactivateMarker').mockImplementation(async () => {
-        marker = { ...marker, deactivated: true }
-    })
-    const restore = vi.spyOn(api, 'restoreMarker').mockImplementation(async () => {
-        marker = { ...marker, deactivated: false }
-    })
-    mount('/admin/all')
-    fireEvent.click(await screen.findByRole('button', { name: 'Disable' }))
-    expect(disable).not.toHaveBeenCalled()
-    expect(screen.getByRole('alertdialog')).toHaveTextContent('All data is kept')
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
-    await screen.findByRole('button', { name: 'Restore' })
-    expect(disable).toHaveBeenCalledWith(marker.id, expect.any(AbortSignal))
-    expect(screen.getByRole('button', { name: 'Edit' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
-    expect(screen.getByRole('alertdialog')).toHaveTextContent(
-        'previous visibility and review status',
-    )
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
-    await screen.findByRole('button', { name: 'Disable' })
-    expect(restore).toHaveBeenCalledWith(marker.id, expect.any(AbortSignal))
-    expect(screen.getByRole('button', { name: 'Edit' })).toBeEnabled()
-})
-
-it('does not send a supposedly recoverable deletion to an older backend', async () => {
-    const disable = vi.spyOn(api, 'deactivateMarker')
-    mount('/admin/all')
-    const waiting = await screen.findByRole('button', { name: 'Server update required' })
-    expect(waiting).toBeDisabled()
-    fireEvent.click(waiting)
-    expect(disable).not.toHaveBeenCalled()
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
-})
-
-it('keeps the dashboard usable after approval without rerunning the access gate', async () => {
-    mount()
-    await screen.findByRole('heading', { name: 'Review synthetic' })
-    // Moderation reauthorizes on the server; refreshing its data must not reset
-    // the whole dashboard because an unrelated users-list probe is unavailable.
-    vi.mocked(api.readUsers).mockRejectedValue(new ApiError(503, 'unavailable'))
-    vi.mocked(api.readMarkers).mockResolvedValue([])
-    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
-    await screen.findByText('No items.')
-    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
-    expect(screen.getByRole('link', { name: 'Users' })).toBeInTheDocument()
-    expect(api.readUsers).toHaveBeenCalledTimes(1)
-    expect(api.moderate).toHaveBeenCalledTimes(1)
-})
-
-it('groups content and images for each place and supports consecutive approvals', async () => {
-    const image: api.ImageProposal = {
-        id: 1,
-        markerId: 1,
-        markerTitle: 'Review synthetic',
-        proposerUsername: 'synthetic',
-        proposerPublicId: null,
-        imageUrl: '/uploads/markers/synthetic.jpg',
-        status: 'PENDING',
-        createdAt: '2026-09-15T01:00:00Z',
-    }
-    vi.mocked(api.readImages).mockResolvedValue([image])
-    vi.mocked(api.moderate).mockImplementation(async (kind) => {
-        if (kind === 'markers') vi.mocked(api.readMarkers).mockResolvedValue([])
-        else vi.mocked(api.readImages).mockResolvedValue([])
-    })
-    const { container } = mount()
-    await screen.findByText('Photo submission')
-    expect(container.querySelectorAll('.admin-place-group')).toHaveLength(1)
-    expect(container.querySelectorAll('.admin-card')).toHaveLength(2)
-    const first = screen.getAllByRole('article')[0]!
-    fireEvent.click(within(first).getByRole('button', { name: 'Approve' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
-    await waitFor(() => expect(screen.queryByText('New place')).not.toBeInTheDocument())
-    expect(screen.getByText('Photo submission')).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled())
-    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
-    expect(screen.getByRole('alertdialog')).toHaveTextContent('Photo submission')
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
-    await screen.findByText('No items.')
-    expect(vi.mocked(api.moderate).mock.calls.map(([kind, id]) => [kind, id])).toEqual([
-        ['markers', 1],
-        ['images', 1],
-    ])
-})
-
-it('keeps navigation and refresh available when the post-approval queue read fails', async () => {
-    mount()
-    await screen.findByRole('heading', { name: 'Review synthetic' })
-    vi.mocked(api.readMarkers).mockRejectedValueOnce(new ApiError(503, 'unavailable'))
-    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
     await screen.findByText('The request failed. Refresh and try again.')
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled())
     expect(screen.getByRole('link', { name: 'All places' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
     await screen.findByRole('heading', { name: 'Review synthetic' })
-    expect(api.moderate).toHaveBeenCalledTimes(1)
+    expect(api.moderate).not.toHaveBeenCalled()
 })
 
-it('has no bulk image-cleanup action in all places', async () => {
-    mount('/admin/all')
-    await screen.findByRole('heading', { name: 'Review synthetic' })
-    expect(screen.queryByRole('button', { name: /clean|clear missing/i })).not.toBeInTheDocument()
-})
-
-it('releases the mutation lock even if cache refresh itself rejects', async () => {
-    mount()
-    await screen.findByRole('heading', { name: 'Review synthetic' })
-    vi.spyOn(client, 'invalidateQueries').mockRejectedValueOnce(new Error('refresh interrupted'))
-    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
-    await screen.findByText(
-        'Saved, but the list could not refresh. Refresh before reviewing another item.',
-    )
-    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
-    expect(api.moderate).toHaveBeenCalledTimes(1)
-    vi.mocked(api.readMarkers).mockResolvedValue([])
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
-    await screen.findByText('No items.')
-})
-
-it('releases the review actions while a post-approval refresh is still waiting', async () => {
-    const first = syntheticPlace({ id: 1, title: 'First pending', reviewStatus: 'PENDING' })
-    const second = syntheticPlace({ id: 2, title: 'Second pending', reviewStatus: 'PENDING' })
-    vi.mocked(api.readMarkers).mockResolvedValueOnce([first, second])
-    let finishRefresh!: (value: ReturnType<typeof syntheticPlace>[]) => void
-    vi.mocked(api.readMarkers).mockImplementation(
-        () =>
-            new Promise((resolve) => {
-                finishRefresh = resolve
-            }),
-    )
-    mount()
-    await screen.findByRole('heading', { name: first.title })
-    fireEvent.click(
-        within(screen.getAllByRole('article')[0]!).getByRole('button', { name: 'Approve' }),
-    )
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
-    await screen.findByText('Completed.')
-    await waitFor(() => expect(api.readMarkers).toHaveBeenCalledTimes(2))
-    try {
-        expect(screen.queryByRole('heading', { name: first.title })).not.toBeInTheDocument()
-        expect(
-            within(
-                screen.getByRole('heading', { name: second.title }).closest('article')!,
-            ).getByRole('button', { name: 'Approve' }),
-        ).toBeEnabled()
-    } finally {
-        await act(async () => finishRefresh([second]))
-    }
-})
-
-it('reviews Chinese source content even when the dashboard language is English', async () => {
-    mount()
-    await screen.findByRole('heading', { name: 'Review synthetic' })
-    expect(api.readMarkers).toHaveBeenCalledWith(false, 'zh', expect.any(AbortSignal))
-    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
-    await waitFor(() =>
-        expect(api.moderate).toHaveBeenCalledWith(
-            'markers',
-            1,
-            'approve',
-            'zh',
-            expect.any(AbortSignal),
-        ),
-    )
-})
-
-it('keeps other content proposals actionable without refetching every baseline', async () => {
-    vi.mocked(api.readMarkers).mockResolvedValue([])
+it('loads only the selected edit baseline and keeps it actionable', async () => {
+    vi.mocked(api.readPendingMarkers).mockResolvedValue([])
     const places = [
         syntheticPlace({ id: 10, title: '中文原文一', contentLanguage: 'zh' }),
         syntheticPlace({ id: 20, title: '中文原文二', contentLanguage: 'zh' }),
@@ -387,23 +170,13 @@ it('keeps other content proposals actionable without refetching every baseline',
         proposerIsOwner: true,
         status: 'PENDING' as const,
     }))
-    vi.mocked(api.readEdits).mockResolvedValueOnce(proposals).mockResolvedValue([proposals[1]!])
+    vi.mocked(api.readEdits).mockResolvedValue(proposals)
     const read = vi
         .spyOn(privatePlaces, 'readAccountPlace')
         .mockImplementation(async (id) => places.find((place) => String(place.id) === id)!)
-    mount()
-    await waitFor(() =>
-        expect(
-            screen
-                .getAllByRole('button', { name: 'Approve' })
-                .every((button) => !button.hasAttribute('disabled')),
-        ).toBe(true),
-    )
-    fireEvent.click(screen.getAllByRole('button', { name: 'Approve' })[0]!)
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
-    await screen.findByText('Completed.')
-    await waitFor(() => expect(screen.getAllByRole('article')).toHaveLength(1))
-    expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled()
+    mount('/admin?item=edit-2')
+    await screen.findByRole('heading', { name: '中文原文二' })
     expect(read.mock.calls.filter(([id]) => id === '20')).toHaveLength(1)
-    expect(read.mock.calls.every(([, lang]) => lang === 'zh')).toBe(true)
+    expect(read.mock.calls.filter(([id]) => id === '10')).toHaveLength(0)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled())
 })

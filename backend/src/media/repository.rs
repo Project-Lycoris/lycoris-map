@@ -8,7 +8,7 @@ use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
 use crate::media::model::{
-    ImageProposalRow, MarkerImageRef, PendingImageItem, ProposalMarkerRow, UpdatedAvatarRow,
+    ImageProposalRow, MarkerImageRef, PendingImageRow, ProposalMarkerRow, UpdatedAvatarRow,
     UserAvatarStatus,
 };
 use crate::modules::markers::model::MarkerRow;
@@ -143,8 +143,8 @@ impl MediaRepository {
     }
 
     /// PENDING 图片提案清单（`created_at DESC`）。
-    pub async fn pending_images(&self) -> Result<Vec<PendingImageItem>, sqlx::Error> {
-        sqlx::query_file_as!(PendingImageItem, "src/media/sql/pending_images.sql")
+    pub async fn pending_images(&self) -> Result<Vec<PendingImageRow>, sqlx::Error> {
+        sqlx::query_file_as!(PendingImageRow, "src/media/sql/pending_images.sql")
             .fetch_all(&self.pool)
             .await
     }
@@ -221,11 +221,13 @@ impl MediaRepository {
         conn: &mut PgConnection,
         reviewer: &str,
         proposal_id: i64,
+        review_note: Option<&str>,
     ) -> Result<u64, sqlx::Error> {
         let result = sqlx::query_file!(
             "src/media/sql/reject_image_proposal.sql",
             reviewer,
-            proposal_id
+            proposal_id,
+            review_note
         )
         .execute(&mut *conn)
         .await?;

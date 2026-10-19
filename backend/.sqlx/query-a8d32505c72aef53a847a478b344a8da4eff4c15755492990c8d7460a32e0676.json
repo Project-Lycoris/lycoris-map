@@ -1,0 +1,140 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT e.id, e.created_at, e.actor_public_id, e.actor_username, e.action,\n       e.target_kind, e.target_id, e.marker_id,\n       CASE WHEN m.id IS NOT NULL THEN m.title END AS marker_title,\n       CASE WHEN e.target_kind = 'user' THEN u.username END AS target_label,\n       e.note\nFROM moderation_events e\nLEFT JOIN map_markers m ON m.id = e.marker_id\nLEFT JOIN users u ON e.target_kind = 'user' AND u.id = e.target_id\nWHERE ($1::bigint IS NULL OR e.marker_id = $1)\nORDER BY e.created_at DESC, e.id DESC\nLIMIT $2 OFFSET $3\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "moderation_events",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "moderation_events",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "actor_public_id",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "moderation_events",
+            "name": "actor_public_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "actor_username",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "moderation_events",
+            "name": "actor_username"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "action",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "moderation_events",
+            "name": "action"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "target_kind",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "moderation_events",
+            "name": "target_kind"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "target_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "moderation_events",
+            "name": "target_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "marker_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "moderation_events",
+            "name": "marker_id"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "marker_title",
+        "type_info": "Varchar",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "target_label",
+        "type_info": "Varchar",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 10,
+        "name": "note",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "moderation_events",
+            "name": "note"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      null,
+      null,
+      true
+    ]
+  },
+  "hash": "a8d32505c72aef53a847a478b344a8da4eff4c15755492990c8d7460a32e0676"
+}

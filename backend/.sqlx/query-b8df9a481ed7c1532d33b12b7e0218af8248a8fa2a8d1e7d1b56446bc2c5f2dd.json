@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE marker_edit_proposals\nSET status = $2,\n    reviewed_by = $3,\n    reviewed_at = $4,\n    review_note = $5\nWHERE id = $1\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Timestamptz",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b8df9a481ed7c1532d33b12b7e0218af8248a8fa2a8d1e7d1b56446bc2c5f2dd"
+}

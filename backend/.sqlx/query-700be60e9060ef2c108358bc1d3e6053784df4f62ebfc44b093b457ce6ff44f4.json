@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE marker_image_proposals\nSET status = 'REJECTED',\n    reviewed_by = $1,\n    reviewed_at = now(),\n    review_note = $3\nWHERE id = $2\n  AND status = 'PENDING'\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Int8",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "700be60e9060ef2c108358bc1d3e6053784df4f62ebfc44b093b457ce6ff44f4"
+}

@@ -84,3 +84,84 @@ it('uses the exact moderation and user action endpoints without inventing passwo
     await expect(api.changeUser(Number.MAX_SAFE_INTEGER + 1, 'disable', signal)).rejects.toThrow()
     expect(fetcher).toHaveBeenCalledTimes(7)
 })
+
+it('reads pending submissions with submitter statistics', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+        json([
+            {
+                id: 1,
+                version: 1,
+                lat: 31.2,
+                lng: 121.4,
+                category: 'accessible_toilet',
+                categories: ['accessible_toilet'],
+                title: 'Pending',
+                description: null,
+                sourceLanguage: 'zh',
+                contentLanguage: 'zh',
+                isPublic: true,
+                username: 'alice',
+                userPublicId: null,
+                clientRequestId: null,
+                isActive: true,
+                openTimeStart: '08:00',
+                openTimeEnd: '22:00',
+                reviewStatus: 'PENDING',
+                lastEditedBy: null,
+                lastEditedByPublicId: null,
+                lastEditedByOwner: false,
+                markImage: null,
+                createdAt: '2026-10-18T06:50:15Z',
+                updatedAt: '2026-10-18T06:50:15Z',
+                proposerSubmissionStats: { approved: 3, rejected: 1, pending: 2 },
+            },
+        ]),
+    )
+    vi.stubGlobal('fetch', fetcher)
+    const markers = await api.readPendingMarkers(new AbortController().signal)
+    expect(markers[0]!.proposerSubmissionStats).toEqual({
+        approved: 3,
+        rejected: 1,
+        pending: 2,
+    })
+    expect(fetcher).toHaveBeenCalledWith(
+        '/api/admin/markers/pending?lang=zh',
+        expect.objectContaining({ credentials: 'include', cache: 'no-store' }),
+    )
+})
+
+it('sends reason and changes bodies only when supplied', async () => {
+    const fetcher = vi.fn().mockImplementation(async () => json({ results: [] }))
+    vi.stubGlobal('fetch', fetcher)
+    const signal = new AbortController().signal
+    await api.moderate('markers', 1, 'approve', 'zh', signal, {
+        changes: {
+            title: 'Corrected',
+            category: 'accessible_toilet',
+            categories: ['accessible_toilet'],
+            description: '',
+            language: 'zh',
+            isPublic: true,
+            openTimeStart: '08:00',
+            openTimeEnd: '22:00',
+        },
+    })
+    await api.moderate('edits', 2, 'reject', 'zh', signal, { reason: 'duplicate' })
+    await api.moderate('images', 3, 'approve', 'zh', signal)
+    await api.batchModerate(
+        [
+            { kind: 'marker', id: 1, decision: 'approve' },
+            { kind: 'edit', id: 2, decision: 'reject', reason: 'duplicate' },
+        ],
+        signal,
+    )
+    expect(fetcher.mock.calls.map(([url, init]) => [url, (init as RequestInit).body])).toEqual([
+        ['/api/admin/markers/1/approve?lang=zh', expect.stringContaining('"changes"')],
+        ['/api/admin/markers/edit-proposals/2/reject?lang=zh', '{"reason":"duplicate"}'],
+        ['/api/admin/markers/image-proposals/3/approve?lang=zh', undefined],
+        [
+            '/api/admin/moderation/batch',
+            '{"items":[{"kind":"marker","id":1,"decision":"approve"},{"kind":"edit","id":2,"decision":"reject","reason":"duplicate"}]}',
+        ],
+    ])
+})

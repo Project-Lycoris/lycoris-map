@@ -6,6 +6,7 @@ import { useAdminUi } from './ui'
 import { AdminWork } from './work'
 import { Moderation } from './Moderation'
 import { Users } from './Users'
+import { AuditLog } from './AuditLog'
 import { DesignButton } from '@/shared/ui/design-primitives'
 import { AuthForm } from '@/features/auth/AuthForm'
 import { useAccountFlow } from '@/features/auth/AccountFlow'
@@ -58,6 +59,7 @@ export default function AdminPage() {
                             ['/admin/review', 'Review'],
                             ['/admin/all', 'All places'],
                             ['/admin/usr', 'Users'],
+                            ['/admin/log', 'Records'],
                         ].map(([path, label]) => (
                             <NavLink
                                 key={path}
@@ -79,6 +81,8 @@ export default function AdminPage() {
                     >
                         {route.pathname === '/admin/usr' ? (
                             <Users />
+                        ) : route.pathname === '/admin/log' ? (
+                            <AuditLog />
                         ) : (
                             <Moderation all={route.pathname === '/admin/all'} />
                         )}

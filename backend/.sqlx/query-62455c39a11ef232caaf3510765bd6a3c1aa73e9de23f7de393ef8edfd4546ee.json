@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, public_id, username, nickname, email, password, avatar_url, pronouns, signature,\n       role, deleted, deleted_at, session_version, row_version\nFROM users\nWHERE ($1 = '' OR username ILIKE '%' || $1 || '%' OR nickname ILIKE '%' || $1 || '%'\n       OR email ILIKE '%' || $1 || '%')\nORDER BY id DESC\nLIMIT $2 OFFSET $3\n",
+  "query": "SELECT id, public_id, username, nickname, email, password, avatar_url, pronouns, signature,\n       role, deleted, deleted_at, session_version, row_version\nFROM users\nWHERE ($1::text IS NULL OR username ILIKE $1 ESCAPE '\\'\n       OR nickname ILIKE $1 ESCAPE '\\' OR email ILIKE $1 ESCAPE '\\'\n       OR ($2::bigint IS NOT NULL AND id = $2))\nORDER BY id DESC\nLIMIT $3 OFFSET $4\n",
   "describe": {
     "columns": [
       {
@@ -162,6 +162,7 @@
       "Left": [
         "Text",
         "Int8",
+        "Int8",
         "Int8"
       ]
     },
@@ -182,5 +183,5 @@
       false
     ]
   },
-  "hash": "ca5e43c94328df222c0810df3b761af9bcca3c03bb69d8d756c3cc60e27f1dae"
+  "hash": "62455c39a11ef232caaf3510765bd6a3c1aa73e9de23f7de393ef8edfd4546ee"
 }

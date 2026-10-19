@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT count(*)\nFROM users\nWHERE ($1::text IS NULL OR username ILIKE $1 ESCAPE '\\'\n       OR nickname ILIKE $1 ESCAPE '\\' OR email ILIKE $1 ESCAPE '\\'\n       OR ($2::bigint IS NOT NULL AND id = $2))\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "bb93d09bb9c5de07f53880cc9c5e80840076e40a789869e3741db55561201337"
+}

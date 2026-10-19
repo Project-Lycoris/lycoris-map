@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import { DesignButton } from '@/shared/ui/design-primitives'
 import { useAdminWork } from './work'
@@ -8,8 +9,14 @@ import { Pagination } from './Moderation'
 export function Users() {
     const work = useAdminWork(),
         ui = useAdminUi(),
-        [search, setSearch] = useState(''),
+        [params] = useSearchParams(),
+        [search, setSearch] = useState(() => params.get('q') ?? ''),
         [filter, setFilter] = useState({ q: '', page: 0 })
+    // Audit-log links arrive with `?q=<publicId>`; keep the field in sync.
+    useEffect(() => {
+        const fromUrl = params.get('q')
+        if (fromUrl !== null && fromUrl !== search) setSearch(fromUrl)
+    }, [params])
     useEffect(() => {
         const timer = setTimeout(() => setFilter({ q: search.trim(), page: 0 }), 300)
         return () => clearTimeout(timer)

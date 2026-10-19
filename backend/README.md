@@ -40,6 +40,27 @@ Admin endpoints authorize the current database role `ADMIN` on every request. Ac
 
 The former `/api/admin/markers/cleanup-missing-images` action returns 410 without modifying any records or files, including when called by a cached client.
 
+Moderation v2 keeps every existing path and response shape. The six review routes
+(`marker`/`edit-proposal`/`image-proposal` approve/reject) accept an optional JSON body:
+approve routes may carry `{"changes": MarkerUpdateRequest}`, reject routes may carry
+`{"reason": "..."}`. Omitting the body (or sending an empty body without a JSON
+Content-Type) behaves exactly like the old client. Reasons are trimmed and limited to
+500 characters; approving or restoring a marker clears its reason.
+
+New admin routes:
+
+- `POST /api/admin/moderation/batch` — 1–50 independent decisions per request; per-item
+  results allow partial success. Duplicate `kind+id` pairs are rejected.
+- `GET /api/admin/markers/search` — server-side search with `page`/`size`, `q`
+  (`%`, `_` and `\` are escaped), `status`, `category`, `deactivated` and
+  `sort=updated_desc|created_desc|created_asc`; items add `reviewNote`.
+- `GET /api/admin/moderation/events` — audit timeline, optionally filtered by `markerId`.
+- `GET /api/markers/me/submissions` — the signed-in contributor's own marker, edit and
+  image submissions (newest first, at most 200), including `reviewNote`.
+
+Pending moderation lists add `proposerSubmissionStats` with the proposer's historical
+approved/rejected/pending counts. Public marker DTOs never include `reviewNote`.
+
 Deploy this backend before the matching Web update so cached clients and the new role-only entry both work during rollout.
 
 ## Database changes
@@ -54,6 +75,11 @@ Migration `0012` widens marker, edit-proposal and photo-proposal attribution nam
 to the existing account limit of 255 characters. Apply it before deploying this API;
 existing long usernames and old attribution values are preserved without renaming or
 truncation. Account IDs, permissions and historical migration checksums do not change.
+
+Migration `0013` adds nullable `review_note` columns to markers and both proposal
+tables, plus the `moderation_events` audit table and indexes. Review events are written
+in the same transaction as the business change, so a failed review leaves no event.
+Apply it before deploying this API.
 
 After changing SQL queries, point `DATABASE_URL` at a migrated synthetic database and regenerate metadata with SQLx CLI 0.9.0:
 
