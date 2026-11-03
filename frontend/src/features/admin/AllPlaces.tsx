@@ -138,8 +138,11 @@ export function AllPlaces() {
         },
         [client, work.prefix, work.session.scope, restore],
     )
+    // This view is keyed by account, so the owner is fixed for its lifetime.
+    const owner = useRef(work.session.scope).current
     const undo = useUndoQueue({
         run: work.run,
+        isCurrent: () => !!owner && !!work.session.store?.isCurrent(owner),
         language: 'zh',
         onRestore: restore,
         onCommit: commit,

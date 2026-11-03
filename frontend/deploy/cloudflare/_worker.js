@@ -21,12 +21,14 @@ async function osmTile(request) {
         return response
     }
     // Fixed provider/path only: never forward cookies, credentials or arbitrary URLs.
-    // OSM requires stable application identification and the real web Referer.
+    // OSM requires stable application identification and a Referer. Send only the
+    // site origin: the page URL carries marker IDs, coordinates and shared titles.
     const headers = new Headers({
         'User-Agent': 'LycorisMaps/1.0 (+https://lycoris-map.com)',
         Accept: 'image/png',
+        Referer: 'https://lycoris-map.com/',
     })
-    for (const name of ['Referer', 'If-None-Match', 'If-Modified-Since']) {
+    for (const name of ['If-None-Match', 'If-Modified-Since']) {
         const value = request.headers.get(name)
         if (value) headers.set(name, value)
     }
@@ -84,6 +86,12 @@ function backendRequest(request, method = request.method) {
     const forwarded = new Request(upstream, request)
     forwarded.headers.set('X-Forwarded-Host', incoming.host)
     forwarded.headers.set('X-Forwarded-Proto', 'https')
+    // A same-zone subrequest derives CF-Connecting-IP from X-Real-IP. Pin both to the
+    // visitor seen by Cloudflare so callers cannot choose their rate-limit identity.
+    const client = request.headers.get('CF-Connecting-IP') || ''
+    forwarded.headers.delete('Forwarded')
+    forwarded.headers.set('X-Real-IP', client)
+    forwarded.headers.set('X-Forwarded-For', client)
     return method === request.method ? forwarded : new Request(forwarded, { method, body: null })
 }
 

@@ -60,9 +60,17 @@ pub const DEFAULT_LOGIN_RATE_LIMIT_MAX_PER_ACCOUNT: u32 = 10;
 pub const DEFAULT_LOGIN_RATE_LIMIT_MAX_PER_IP: u32 = 30;
 /// 登录限流默认时间窗口 900 秒（两个计数器共用）。
 pub const DEFAULT_LOGIN_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(900);
+/// 已登录改密：每个账号 10 次 / 900 秒。原密码校验占用 BCrypt 许可，必须有上限，
+/// 否则一个会话就能排满全站登录队列，持有他人 Cookie 者也能无限猜原密码。
+pub const PASSWORD_CHANGE_RATE_LIMIT_MAX: u32 = 10;
+pub const PASSWORD_CHANGE_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(900);
+/// 邮箱找回提交：每个来源 20 次 / 900 秒，限制单一来源批量消耗他人邮箱的错误次数。
+pub const RESET_PASSWORD_RATE_LIMIT_MAX: u32 = 20;
+pub const RESET_PASSWORD_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(900);
 /// BCrypt 默认工作因子，对齐 Java `BCryptPasswordEncoder` 默认值 10。
 pub const DEFAULT_BCRYPT_COST: u32 = 10;
-/// 管理员重置用户密码时的默认值（与 Java `admin.default-user-password` 一致）。
+/// 本地与测试配置（[`Config::new`]）使用的管理员重置密码；源码公开，绝不用于部署环境。
+/// [`Config::from_env`] 不回落到此值。
 pub const DEFAULT_ADMIN_USER_PASSWORD: &str = "Lycoris123!";
 
 /// 会话/ Cookie 时长上限（10 年），避免 TTL 转 i64 时溢出或误配置成天文数字。
@@ -141,7 +149,9 @@ pub struct Config {
     pub login_rate_limit_window: Duration,
     // —— 阶段 2：密码与管理员 ——
     pub bcrypt_cost: u32,
-    pub admin_default_user_password: String,
+    /// 管理员重置用户密码时写入的密码。生产环境未配置时为 `None`，重置接口拒绝执行，
+    /// 绝不回落到源码里公开的值。
+    pub admin_default_user_password: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -196,7 +206,7 @@ impl Config {
             login_rate_limit_max_per_ip: DEFAULT_LOGIN_RATE_LIMIT_MAX_PER_IP,
             login_rate_limit_window: DEFAULT_LOGIN_RATE_LIMIT_WINDOW,
             bcrypt_cost: DEFAULT_BCRYPT_COST,
-            admin_default_user_password: DEFAULT_ADMIN_USER_PASSWORD.to_string(),
+            admin_default_user_password: Some(DEFAULT_ADMIN_USER_PASSWORD.to_string()),
         }
     }
 
@@ -336,8 +346,7 @@ impl Config {
             login_rate_limit_window: seconds("LOGIN_RATE_LIMIT_WINDOW_SECONDS", 900)?,
             password_max_concurrency: parse_password_max_concurrency("PASSWORD_MAX_CONCURRENCY")?,
             bcrypt_cost: non_zero("BCRYPT_COST", parse_or("BCRYPT_COST", DEFAULT_BCRYPT_COST)?)?,
-            admin_default_user_password: optional("ADMIN_DEFAULT_USER_PASSWORD")
-                .unwrap_or_else(|| DEFAULT_ADMIN_USER_PASSWORD.to_string()),
+            admin_default_user_password: optional("ADMIN_DEFAULT_USER_PASSWORD"),
         })
     }
 }

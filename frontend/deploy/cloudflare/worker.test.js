@@ -28,7 +28,8 @@ test('OSM requests use a fixed upstream, preserve attribution headers and never 
             headers: {
                 Cookie: 'session=secret',
                 Authorization: 'Bearer secret',
-                Referer: 'https://lycoris-map.com/',
+                // The page URL identifies the viewed place; only the origin may reach OSM.
+                Referer: 'https://lycoris-map.com/maps?markerId=42&lat=31.2304&lng=121.4737',
                 'Cache-Control': 'no-cache',
                 Pragma: 'no-cache',
             },
@@ -146,6 +147,9 @@ test('API writes preserve authentication, Origin and body without caching or fol
         assert.equal(request.method, 'POST')
         assert.equal(request.headers.get('Origin'), 'https://lycoris-map.com')
         assert.equal(request.headers.get('Cookie'), 'LYCORIS_SESSION=test')
+        assert.equal(request.headers.get('X-Real-IP'), '203.0.113.9')
+        assert.equal(request.headers.get('X-Forwarded-For'), '203.0.113.9')
+        assert.equal(request.headers.get('Forwarded'), null)
         assert.equal(await request.text(), '{"name":"A"}')
         assert.equal(options.redirect, 'manual')
         assert.equal(options.cf.cacheTtl, 0)
@@ -157,7 +161,14 @@ test('API writes preserve authentication, Origin and body without caching or fol
     const response = await worker.fetch(
         new Request('https://lycoris-map.com/api/markers?lang=en', {
             method: 'POST',
-            headers: { Origin: 'https://lycoris-map.com', Cookie: 'LYCORIS_SESSION=test' },
+            headers: {
+                Origin: 'https://lycoris-map.com',
+                Cookie: 'LYCORIS_SESSION=test',
+                'CF-Connecting-IP': '203.0.113.9',
+                'X-Real-IP': '198.51.100.1',
+                'X-Forwarded-For': '198.51.100.2',
+                Forwarded: 'for=198.51.100.3',
+            },
             body: '{"name":"A"}',
         }),
         {},

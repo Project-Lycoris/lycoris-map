@@ -132,8 +132,11 @@ export function ReviewQueue() {
         },
         [client, work.prefix, work.session.scope],
     )
+    // This view is keyed by account, so the owner is fixed for its lifetime.
+    const owner = useRef(work.session.scope).current
     const undo = useUndoQueue({
         run: work.run,
+        isCurrent: () => !!owner && !!work.session.store?.isCurrent(owner),
         // Pending submissions are authored in Chinese; keep the existing
         // moderation `lang` semantics independent of the dashboard locale.
         language: 'zh',
@@ -282,6 +285,12 @@ export function ReviewQueue() {
                 return
             }
             if (!selectedItem) return
+            // Decision keys act once per press. Auto-repeat would approve each newly
+            // selected item while the key is held.
+            if (event.repeat && 'aArReExXzZ'.includes(key)) {
+                event.preventDefault()
+                return
+            }
             if (key === 'a' || key === 'A') {
                 event.preventDefault()
                 if (!staleKeys.has(selectedItem.key)) approve(selectedItem)

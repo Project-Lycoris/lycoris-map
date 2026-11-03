@@ -106,11 +106,14 @@ export function sendKeepalive(requests: QueueEntry[], language: Language) {
 
 export function useUndoQueue({
     run,
+    isCurrent,
     language,
     onRestore,
     onCommit,
 }: {
     run: AdminRun
+    /** Whether the account that made these decisions is still the signed-in account. */
+    isCurrent: () => boolean
     language: Language
     onRestore: (items: ReviewItem[]) => void
     onCommit: (items: ReviewItem[]) => void
@@ -120,8 +123,10 @@ export function useUndoQueue({
     const timers = useRef(new Map<string, number>())
     const counter = useRef(0)
     const runRef = useRef(run)
+    const isCurrentRef = useRef(isCurrent)
     const languageRef = useRef(language)
     runRef.current = run
+    isCurrentRef.current = isCurrent
     languageRef.current = language
 
     const bump = useCallback(() => setVersion((value) => value + 1), [])
@@ -239,6 +244,8 @@ export function useUndoQueue({
         },
         [bump, drop, onCommit, onRestore],
     )
+    const executeRef = useRef(execute)
+    executeRef.current = execute
 
     const schedule = useCallback(
         (input: ScheduleInput) => {
@@ -281,26 +288,47 @@ export function useUndoQueue({
         return entry ? undo(entry.id) : false
     }, [undo])
 
-    const flush = useCallback(() => {
-        const pending = entries.current.filter((entry) => entry.status === 'pending')
-        if (!pending.length) return
-        for (const entry of pending) {
-            const timer = timers.current.get(entry.id)
-            if (timer !== undefined) window.clearTimeout(timer)
-            timers.current.delete(entry.id)
-            entry.status = 'sending'
-        }
-        entries.current = entries.current.filter((entry) => !pending.includes(entry))
-        sendKeepalive(pending, languageRef.current)
-        bump()
-    }, [bump])
+    /**
+     * Sends decisions still inside their undo window. Decisions belong to the account
+     * that made them: after sign-out or an account switch they are discarded, never sent
+     * with the next account's Cookie. Leaving the document needs `keepalive`; in-app
+     * navigation keeps the page alive, so it uses the owner-checked private request path,
+     * where a concurrent sign-out aborts instead of racing it.
+     */
+    const flush = useCallback(
+        (leavingPage = true) => {
+            const pending = entries.current.filter((entry) => entry.status === 'pending')
+            if (!pending.length) return
+            for (const entry of pending) {
+                const timer = timers.current.get(entry.id)
+                if (timer !== undefined) window.clearTimeout(timer)
+                timers.current.delete(entry.id)
+            }
+            if (!isCurrentRef.current()) {
+                entries.current = entries.current.filter((entry) => !pending.includes(entry))
+                bump()
+                return
+            }
+            if (!leavingPage) {
+                for (const entry of pending) void executeRef.current(entry)
+                return
+            }
+            for (const entry of pending) entry.status = 'sending'
+            entries.current = entries.current.filter((entry) => !pending.includes(entry))
+            sendKeepalive(pending, languageRef.current)
+            bump()
+        },
+        // Stable on purpose: the cleanup below must run only on unmount, not whenever
+        // a callback identity changes inside the undo window.
+        [bump],
+    )
 
     useEffect(() => {
-        const hide = () => flush()
+        const hide = () => flush(true)
         window.addEventListener('pagehide', hide)
         return () => {
             window.removeEventListener('pagehide', hide)
-            flush()
+            flush(false)
         }
     }, [flush])
 

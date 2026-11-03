@@ -159,6 +159,37 @@ where
     Ok(exists.unwrap_or(false))
 }
 
+/// 新用户名是否会与登录标识的另一个命名空间冲突：已有账号（含软删除）的邮箱。
+///
+/// 登录同时按用户名和邮箱匹配，命中多个账号时一律失败。若允许用户名等于他人邮箱，
+/// 任何人都能注册一个“影子”账号，让邮箱主人永远无法用邮箱登录。
+pub async fn username_matches_any_email<'e, E>(
+    executor: E,
+    username: &str,
+) -> Result<bool, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE lower(email) = lower($1))")
+        .bind(username)
+        .fetch_one(executor)
+        .await
+}
+
+/// 新邮箱是否已被某个账号（含软删除）用作用户名；历史用户名允许含 `@`。
+pub async fn email_matches_any_username<'e, E>(
+    executor: E,
+    email_lower: &str,
+) -> Result<bool, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE lower(username) = $1)")
+        .bind(email_lower)
+        .fetch_one(executor)
+        .await
+}
+
 /// 插入新用户：`role=USER`、`deleted=false`、版本从 0 开始。
 pub async fn insert_user<'e, E>(
     executor: E,

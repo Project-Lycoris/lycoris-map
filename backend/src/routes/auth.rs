@@ -96,7 +96,11 @@ pub async fn login(
     // 历史库可能重复；匹配到多个账号时按通用凭据失败处理，绝不选择首个账号。
     let user = match candidates {
         Ok(list) if list.len() == 1 => list.into_iter().next().expect("已确认长度为一"),
-        Ok(_) => return invalid_credentials(),
+        Ok(_) => {
+            // 不存在与“存在但密码错误”耗时一致，不暴露账号是否注册。
+            state.passwords.equalize(&password).await;
+            return invalid_credentials();
+        }
         Err(_) => return web::unavailable(),
     };
 
@@ -193,6 +197,12 @@ pub async fn register(
     {
         return register_rejected();
     }
+    // Sign-in accepts a username or an email. A new username shaped like an email
+    // could shadow someone's address and make their email sign-in ambiguous forever.
+    // Existing usernames containing `@` keep working.
+    if username.contains('@') {
+        return web::api_error(StatusCode::BAD_REQUEST, 4005, "Username cannot contain @.");
+    }
     // 按真实 schema 约束在应用层返回 400，避免落到 PG 变成 500。
     if !fits(&username, users::USERNAME_MAX)
         || !fits(&email, 255)
@@ -251,6 +261,9 @@ pub async fn register(
 }
 
 /// 在 advisory lock 事务内重新检查用户名与规范化邮箱后插入；重复返回 `Ok(None)`。
+///
+/// 登录标识在用户名和邮箱两个命名空间里匹配，所以两边交叉查重：新用户名不能等于
+/// 已有邮箱，新邮箱也不能等于已有（历史上允许含 `@` 的）用户名。
 async fn insert_registered_user(
     state: &AppState,
     username: &str,
@@ -269,6 +282,12 @@ async fn insert_registered_user(
         .await
         .map_err(|_| ())?
         || users::email_exists_any(&mut *tx, email)
+            .await
+            .map_err(|_| ())?
+        || users::username_matches_any_email(&mut *tx, username)
+            .await
+            .map_err(|_| ())?
+        || users::email_matches_any_username(&mut *tx, email)
             .await
             .map_err(|_| ())?
     {
@@ -352,6 +371,25 @@ pub async fn change_password(
     }
 
     let current = &user.0.user;
+    // Count every attempt before BCrypt: a session (or a stolen Cookie) must not be
+    // able to guess the current password without limit or queue all hashing work.
+    match state
+        .password_change_rate_limiter
+        .try_acquire_subject(&current.public_id.to_string())
+        .await
+    {
+        RateLimitOutcome::Allowed => {}
+        RateLimitOutcome::Limited {
+            retry_after_seconds,
+        } => {
+            return too_many_requests(
+                42934,
+                "Too many password change attempts. Try again later.",
+                retry_after_seconds,
+            );
+        }
+        RateLimitOutcome::Unavailable => return web::unavailable(),
+    }
     let stored = current.password.clone().unwrap_or_default();
     if !state.passwords.matches(&old_password, &stored).await {
         return web::api_error(StatusCode::BAD_REQUEST, 400, "原密码错误或新密码不合法");

@@ -78,8 +78,14 @@ The supplied certificate covers both `.cn` hostnames and expires on
 Replace the certificate/key together, verify their match, and recreate Caddy and
 nginx because individual bind mounts can retain the old file inode.
 
-Only TCP 80/443 are public Web ports. Cloudflare client-address headers are trusted
-only from Cloudflare's published IP ranges; direct clients cannot spoof them.
+Only TCP 80/443 are public Web ports. Caddy accepts a forwarded client address
+only from a Cloudflare address that also presents `X-Lycoris-Edge-Secret`. Any
+Cloudflare customer's Worker can connect from those ranges, so the range check
+alone is not sufficient. Other requests use the TCP peer address. Set
+`LYCORIS_EDGE_SECRET` in `/opt/lycoris/private/deploy.env` (at least 32 random
+characters, for example `openssl rand -hex 32`) to the same value as the API
+Worker's `EDGE_SECRET`. Compose refuses to start Caddy without it. Configure the
+Worker secret first, then recreate Caddy.
 The OSM route remains a bounded, cached tile relay through the existing Worker.
 Tencent and Tianditu browser keys remain deployment inputs. Mainland media is
 served by Rust's authorized upload routes; `.com` retains its existing authorized

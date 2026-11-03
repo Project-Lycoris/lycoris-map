@@ -10,7 +10,8 @@ import {
 } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router'
-import { SessionProvider } from '@/features/auth/SessionProvider'
+import { SessionProvider, useSessionStore } from '@/features/auth/SessionProvider'
+import type { SessionStore } from '@/features/auth/SessionStore'
 import { AccountFlowProvider } from '@/features/auth/AccountFlow'
 import { LanguageProvider } from '@/shared/i18n'
 import * as sessionApi from '@/shared/api/session'
@@ -89,6 +90,12 @@ function imageProposal(overrides: Partial<api.ImageProposal> = {}): api.ImagePro
 }
 
 let client: QueryClient
+let sessionStore: SessionStore | null = null
+
+function StoreProbe() {
+    sessionStore = useSessionStore()
+    return null
+}
 
 function mount(path = '/admin', language: 'en' | 'zh' = 'en') {
     client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
@@ -97,6 +104,7 @@ function mount(path = '/admin', language: 'en' | 'zh' = 'en') {
             <QueryClientProvider client={client}>
                 <LanguageProvider initialPreference={language}>
                     <SessionProvider>
+                        <StoreProbe />
                         <AccountFlowProvider>
                             <AdminPage />
                         </AccountFlowProvider>
@@ -185,6 +193,38 @@ it('flushes pending decisions on pagehide with keepalive', async () => {
     expect(fetcher).toHaveBeenCalledWith(
         '/api/admin/markers/1/approve?lang=zh',
         expect.objectContaining({ method: 'POST', credentials: 'include', keepalive: true }),
+    )
+})
+
+it('never sends a pending decision once another account owns the session', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetcher)
+    await ready()
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    // Another tab signed in as a different administrator inside the undo window.
+    vi.mocked(sessionApi.fetchMe).mockResolvedValue({ ...user, publicId: 'B', username: 'other' })
+    await act(async () => sessionStore!.externalChange())
+    await screen.findByRole('heading', { name: 'Pending place' })
+    fireEvent(window, new Event('pagehide'))
+    vi.useFakeTimers()
+    await act(async () => {
+        await vi.advanceTimersByTimeAsync(6000)
+    })
+    expect(api.moderate).not.toHaveBeenCalled()
+    expect(fetcher).not.toHaveBeenCalled()
+})
+
+it('sends through the owner-checked path when navigating inside the dashboard', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetcher)
+    await ready()
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    fireEvent.click(screen.getByRole('link', { name: 'Users' }))
+    await waitFor(() => expect(api.moderate).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.moderate).mock.calls[0]!.slice(0, 3)).toEqual(['markers', 1, 'approve'])
+    expect(fetcher).not.toHaveBeenCalledWith(
+        expect.stringContaining('/approve'),
+        expect.objectContaining({ keepalive: true }),
     )
 })
 
@@ -441,6 +481,23 @@ it('supports J/K/A/Z and ignores shortcuts while typing', async () => {
     act(() => search.focus())
     fireEvent.keyDown(search, { key: 'j' })
     expect(screen.getByRole('heading', { name: 'Two' })).toBeInTheDocument()
+})
+
+it('acts once per key press when a decision key is held down', async () => {
+    vi.mocked(api.readPendingMarkers).mockResolvedValue([
+        pendingMarker({ id: 1, title: 'One' }),
+        pendingMarker({ id: 2, title: 'Two' }),
+        pendingMarker({ id: 3, title: 'Three' }),
+    ])
+    mount()
+    await screen.findByRole('heading', { name: 'One' })
+    fireEvent.keyDown(window, { key: 'a' })
+    await screen.findByRole('heading', { name: 'Two' })
+    // Auto-repeat events from the same held key must not approve the next items.
+    fireEvent.keyDown(window, { key: 'a', repeat: true })
+    fireEvent.keyDown(window, { key: 'a', repeat: true })
+    expect(screen.getByRole('heading', { name: 'Two' })).toBeInTheDocument()
+    expect(screen.getAllByText(/^Approved ·/)).toHaveLength(1)
 })
 
 it('does not scroll the page when acting on a queue item', async () => {
