@@ -1,17 +1,28 @@
-{
-    servers {
-        # Only Cloudflare may forward client addresses; the retired host is untrusted.
-        trusted_proxies static 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
-        client_ip_headers X-Forwarded-For
-    }
-}
+# No global client-address trust: {client_ip} is the TCP peer. Cloudflare egress
+# ranges are shared by every Cloudflare customer, so an address range alone cannot
+# identify the API Worker. Only a request carrying the Worker's shared secret may
+# supply the client address used for rate limits.
 
 lycoris-map.cn {
     tls /etc/caddy/tls/fullchain.pem /etc/caddy/tls/privkey.pem
     header X-Lycoris-Region shanghai
+    # The lycoris-api-shanghai Worker replaces any caller-supplied X-Forwarded-For
+    # with Cloudflare's CF-Connecting-IP before adding this header.
+    @edge {
+        path /api /api/* /uploads /uploads/* /health /health/*
+        header X-Lycoris-Edge-Secret {$LYCORIS_EDGE_SECRET}
+        remote_ip 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+    }
     @backend path /api /api/* /uploads /uploads/* /health /health/*
+    handle @edge {
+        reverse_proxy 127.0.0.1:18081 {
+            header_up -X-Lycoris-Edge-Secret
+            header_up X-Forwarded-For {http.request.header.X-Forwarded-For}
+        }
+    }
     handle @backend {
         reverse_proxy 127.0.0.1:18081 {
+            header_up -X-Lycoris-Edge-Secret
             header_up X-Forwarded-For {client_ip}
         }
     }

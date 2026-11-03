@@ -107,6 +107,9 @@ services:
     image: ${LYCORIS_GATEWAY_IMAGE:-caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648}
     restart: unless-stopped
     network_mode: host
+    environment:
+      # Shared with the API Worker's EDGE_SECRET; see ../cloudflare-api/README.md.
+      LYCORIS_EDGE_SECRET: ${LYCORIS_EDGE_SECRET:?Set the API Worker shared secret}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - /opt/lycoris/private/tls/lycoris-map.cn/fullchain.pem:/etc/caddy/tls/fullchain.pem:ro

@@ -2,6 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import worker from './worker.js'
 
+const env = { EDGE_SECRET: 'synthetic-edge-secret-0123456789abcdef' }
+
 test('forwards writes and credentials only to Shanghai without caching or following redirects', async () => {
     const original = globalThis.fetch
     globalThis.fetch = async (request, options) => {
@@ -12,6 +14,7 @@ test('forwards writes and credentials only to Shanghai without caching or follow
         assert.equal(request.headers.get('Authorization'), 'Bearer synthetic')
         assert.equal(request.headers.get('Cookie'), 'LYCORIS_SESSION=synthetic')
         assert.equal(request.headers.get('X-Forwarded-For'), '203.0.113.9')
+        assert.equal(request.headers.get('X-Lycoris-Edge-Secret'), env.EDGE_SECRET)
         assert.equal(request.headers.get('Forwarded'), null)
         assert.equal(options.redirect, 'manual')
         assert.equal(options.cf.cacheTtl, 0)
@@ -23,8 +26,9 @@ test('forwards writes and credentials only to Shanghai without caching or follow
                 Origin: 'https://lycoris-map.com', Authorization: 'Bearer synthetic',
                 Cookie: 'LYCORIS_SESSION=synthetic', 'CF-Connecting-IP': '203.0.113.9',
                 'X-Forwarded-For': 'spoofed', Forwarded: 'for=spoofed',
+                'X-Lycoris-Edge-Secret': 'caller-chosen',
             },
-        }))
+        }), env)
         assert.equal(response.headers.get('Cache-Control'), 'private, no-store')
         assert.equal(response.headers.get('Set-Cookie'), 'LYCORIS_SESSION=new; Secure; HttpOnly')
     } finally { globalThis.fetch = original }
@@ -37,7 +41,7 @@ test('retains authorization metadata required by the existing private R2 deliver
         return new Response(null, { headers: { 'X-Lycoris-Media-Key': 'media/v1/synthetic.jpg' } })
     }
     try {
-        const response = await worker.fetch(new Request('https://api.lycoris-map.com/uploads/markers/photo.jpg', { method: 'HEAD' }))
+        const response = await worker.fetch(new Request('https://api.lycoris-map.com/uploads/markers/photo.jpg', { method: 'HEAD' }), env)
         assert.equal(response.headers.get('X-Lycoris-Media-Key'), 'media/v1/synthetic.jpg')
     } finally { globalThis.fetch = original }
 })
@@ -46,7 +50,18 @@ test('fails closed for non-API paths and an unavailable Shanghai origin', async 
     const original = globalThis.fetch
     globalThis.fetch = async () => { throw new Error('offline') }
     try {
-        assert.equal((await worker.fetch(new Request('https://api.lycoris-map.com/'))).status, 404)
-        assert.equal((await worker.fetch(new Request('https://api.lycoris-map.com/api/users/me'))).status, 502)
+        assert.equal((await worker.fetch(new Request('https://api.lycoris-map.com/'), env)).status, 404)
+        assert.equal((await worker.fetch(new Request('https://api.lycoris-map.com/api/users/me'), env)).status, 502)
+    } finally { globalThis.fetch = original }
+})
+
+test('refuses to forward without a configured edge secret', async () => {
+    const original = globalThis.fetch
+    globalThis.fetch = async () => { throw new Error('must not reach Shanghai') }
+    try {
+        for (const missing of [undefined, {}, { EDGE_SECRET: '' }, { EDGE_SECRET: 'short' }]) {
+            const response = await worker.fetch(new Request('https://api.lycoris-map.com/api/login', { method: 'POST' }), missing)
+            assert.equal(response.status, 502)
+        }
     } finally { globalThis.fetch = original }
 })
