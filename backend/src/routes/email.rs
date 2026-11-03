@@ -3,7 +3,9 @@ use crate::{
     app::AppState,
     email_verification::{CodeError, Purpose, normalize_email},
     error::ApiResponse,
-    password, users,
+    password,
+    ratelimit::RateLimitOutcome,
+    users,
     web::{self, JsonBody},
 };
 use axum::{
@@ -126,8 +128,26 @@ pub async fn send_code(
 
 pub async fn reset_password(
     State(state): State<AppState>,
+    headers: HeaderMap,
+    connect: ConnectInfo<SocketAddr>,
     JsonBody(request): JsonBody<ResetPasswordRequest>,
 ) -> Response {
+    // Five wrong codes lock an address for everyone. Bound how many addresses one
+    // source can burn through; the per-address lock still stops code guessing.
+    match state
+        .reset_password_rate_limiter
+        .try_acquire(super::client_ip(&state, Some(connect), &headers))
+        .await
+    {
+        RateLimitOutcome::Allowed => {}
+        RateLimitOutcome::Limited {
+            retry_after_seconds,
+        } => {
+            let seconds = u32::try_from(retry_after_seconds.max(1)).unwrap_or(u32::MAX);
+            return code_error(CodeError::Limited(seconds));
+        }
+        RateLimitOutcome::Unavailable => return code_error(CodeError::Unavailable),
+    }
     let email = match normalize_email(&request.email) {
         Ok(email) => email,
         Err(error) => return code_error(error),

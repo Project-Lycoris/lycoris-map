@@ -307,3 +307,63 @@ async fn password_change_invalidates_an_older_recovery_challenge() {
         StatusCode::OK
     );
 }
+
+#[tokio::test]
+async fn failed_delivery_returns_its_site_wide_budget_slot() {
+    use fred::prelude::*;
+    let env = TestEnv::new().await;
+    let budget = format!(
+        "{}:email:v1:send-budget",
+        env.state.config.session_namespace
+    );
+    let spent = || async {
+        env.state
+            .redis
+            .get::<Option<i64>, _>(budget.as_str())
+            .await
+            .unwrap()
+            .unwrap_or(0)
+    };
+    env.mailbox.fail.store(true, Ordering::SeqCst);
+    let failed = env
+        .call(
+            "/api/auth/email-code",
+            json!({"email":"down@example.test","purpose":"register"}),
+            None,
+        )
+        .await;
+    assert_eq!(failed.0, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        spent().await,
+        0,
+        "an outage must not drain everyone's daily budget"
+    );
+    env.mailbox.fail.store(false, Ordering::SeqCst);
+    let sent = env
+        .call(
+            "/api/auth/email-code",
+            json!({"email":"up@example.test","purpose":"register"}),
+            None,
+        )
+        .await;
+    assert_eq!(sent.0, StatusCode::OK);
+    assert_eq!(spent().await, 1);
+}
+
+#[tokio::test]
+async fn one_source_cannot_spend_unlimited_recovery_attempts() {
+    let env = TestEnv::new().await;
+    // No challenge exists, so no address lock is involved: only the source limit applies.
+    let attempt = json!({"email":"nobody@example.test","verificationCode":"000000","newPassword":"new-password"});
+    for _ in 0..20 {
+        let (status, body, _) = env
+            .call("/api/auth/reset-password", attempt.clone(), None)
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["code"], 40021);
+    }
+    let (status, body, _) = env.call("/api/auth/reset-password", attempt, None).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(body["code"], 42932);
+    assert!(body["data"]["retryAfterSeconds"].as_u64().unwrap() >= 1);
+}

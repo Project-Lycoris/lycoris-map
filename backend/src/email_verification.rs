@@ -163,6 +163,11 @@ redis.call('HSET', KEYS[1], 'digest', ARGV[1], 'nonce', ARGV[2], 'ready', '0')
 redis.call('PEXPIRE', KEYS[1], 600000)
 return {0, 0}
 "#;
+const REFUND: &str = r#"
+local current = tonumber(redis.call('GET', KEYS[1]) or '0')
+if current > 0 then redis.call('DECR', KEYS[1]) end
+return 1
+"#;
 const FINISH: &str = r#"
 if redis.call('HGET', KEYS[1], 'nonce') ~= ARGV[1] then return 0 end
 if ARGV[2] == '1' then
@@ -293,9 +298,9 @@ impl EmailCodes {
         keys.push(format!(
             "{}:ip:{}",
             self.namespace,
-            self.digest(&["ip", &ip.to_string()])?
+            self.digest(&["ip", &crate::ratelimit::client_bucket(ip)])?
         ));
-        keys.push(format!("{}:send-budget", self.namespace));
+        keys.push(self.budget_key());
         let nonce = uuid::Uuid::new_v4().to_string();
         self.eval(
             RESERVE,
@@ -352,11 +357,36 @@ impl EmailCodes {
             Duration::from_secs(15),
             mailer.send(email, purpose, &code, chinese),
         )
-        .await
-        .map_err(|_| CodeError::Unavailable)
-        .and_then(|result| result);
+        .await;
+        // The site-wide budget models mail actually handed to SMTP. A rejected
+        // delivery returns its slot so an outage cannot exhaust registration and
+        // recovery for everyone. Per-email and per-source counters stay spent, and a
+        // timeout keeps its slot because the server may still have accepted the mail.
+        if matches!(sent, Ok(Err(_))) {
+            self.refund_budget().await;
+        }
+        let sent = sent
+            .map_err(|_| CodeError::Unavailable)
+            .and_then(|result| result);
         self.finish(email, purpose, &nonce, sent.is_ok()).await?;
         sent
+    }
+    fn budget_key(&self) -> String {
+        format!("{}:send-budget", self.namespace)
+    }
+    async fn refund_budget(&self) {
+        let refunded = tokio::time::timeout(
+            self.timeout,
+            self.redis
+                .eval::<i64, _, _, _>(REFUND, vec![self.budget_key()], Vec::<String>::new()),
+        )
+        .await;
+        if !matches!(refunded, Ok(Ok(_))) {
+            tracing::warn!(
+                target: "lycoris_backend::email_verification",
+                "验证码发送失败后归还全局发信额度失败"
+            );
+        }
     }
     pub async fn consume(
         &self,

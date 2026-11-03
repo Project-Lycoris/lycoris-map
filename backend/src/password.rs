@@ -10,12 +10,14 @@
 
 use std::sync::Arc;
 
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{OnceCell, OwnedSemaphorePermit, Semaphore};
 
 /// BCrypt 允许的最大 UTF-8 字节数；超过则拒绝（与 Java/BCrypt 规范一致）。
 pub const MAX_BCRYPT_BYTES: usize = 72;
 /// 新密码最短长度，按 Java `String.length()`（UTF-16 码元数）兼容。
 pub const MIN_PASSWORD_UTF16_UNITS: usize = 4;
+/// 只用于生成计时对照哈希的固定输入；从不对应任何账号。
+const TIMING_REFERENCE_INPUT: &str = "lycoris-timing-reference";
 
 #[derive(Debug, thiserror::Error)]
 pub enum HashError {
@@ -34,6 +36,8 @@ pub enum HashError {
 pub struct PasswordHasher {
     permits: Arc<Semaphore>,
     cost: u32,
+    /// 与真实哈希同成本的对照值，首次需要时生成。
+    timing_reference: Arc<OnceCell<String>>,
 }
 
 impl PasswordHasher {
@@ -42,6 +46,7 @@ impl PasswordHasher {
         Self {
             permits: Arc::new(Semaphore::new(max_concurrency.max(1))),
             cost,
+            timing_reference: Arc::new(OnceCell::new()),
         }
     }
 
@@ -83,12 +88,31 @@ impl PasswordHasher {
     /// 与 Java `matchesPasswordSafely` 等价：编码串只走 BCrypt，历史明文才允许字面比较。
     pub async fn matches(&self, raw: &str, stored: &str) -> bool {
         if stored.trim().is_empty() {
+            self.equalize(raw).await;
             return false;
         }
         if is_encoded(stored) {
             self.verify(raw.to_string(), stored.to_string()).await
         } else {
             raw == stored
+        }
+    }
+
+    /// 没有可比对的哈希时（账号不存在、重复或无密码），仍跑一次同成本 BCrypt。
+    ///
+    /// 否则“立即失败”与“比对后失败”的耗时差会暴露某个用户名或邮箱是否已注册。
+    /// 结果总是被丢弃；对照哈希生成失败时只跳过等时，不影响认证结论。
+    pub async fn equalize(&self, raw: &str) {
+        if raw.len() > MAX_BCRYPT_BYTES {
+            // 与 verify 相同：超长输入在 BCrypt 之前就被拒绝。
+            return;
+        }
+        let reference = self
+            .timing_reference
+            .get_or_try_init(|| self.hash(TIMING_REFERENCE_INPUT.to_string()))
+            .await;
+        if let Ok(reference) = reference {
+            let _ = self.verify(raw.to_string(), reference.clone()).await;
         }
     }
 
@@ -180,6 +204,23 @@ mod tests {
         let hash = hasher.hash("合成密码-🔷".to_string()).await.unwrap();
         assert!(hash.starts_with("$2b$"), "Rust 新哈希应为 $2b$: {hash}");
         assert!(hasher.verify("合成密码-🔷".to_string(), hash).await);
+    }
+
+    #[tokio::test]
+    async fn missing_credentials_still_spend_one_hash() {
+        let hasher = super::PasswordHasher::new(4, 1);
+        assert!(hasher.timing_reference.get().is_none());
+        // 没有存储密码时仍失败，但已跑过一次同成本 BCrypt。
+        assert!(!hasher.matches("anything", "").await);
+        let reference = hasher
+            .timing_reference
+            .get()
+            .expect("对照哈希已生成")
+            .clone();
+        assert!(reference.starts_with("$2b$04$"), "对照哈希与配置成本一致");
+        // 对照值复用，不会每次请求都重新生成。
+        hasher.equalize("another").await;
+        assert_eq!(hasher.timing_reference.get(), Some(&reference));
     }
 
     #[tokio::test]

@@ -67,6 +67,12 @@ pub async fn reset_password(
     admin: AdminUser,
     Path(id): Path<i32>,
 ) -> Response {
+    // An unset deployment value must not silently reset accounts to a password
+    // that is published in this repository.
+    let Some(reset_password) = state.config.admin_default_user_password.clone() else {
+        return web::text(StatusCode::SERVICE_UNAVAILABLE, "未配置重置密码，无法重置");
+    };
+
     let user = match users::find_any_by_id(&state.db, id).await {
         Ok(Some(user)) => user,
         Ok(None) => return web::text(StatusCode::NOT_FOUND, "用户不存在"),
@@ -76,11 +82,7 @@ pub async fn reset_password(
         return web::text(StatusCode::BAD_REQUEST, "已删除用户不能重置密码");
     }
 
-    let hash = match state
-        .passwords
-        .hash(state.config.admin_default_user_password.clone())
-        .await
-    {
+    let hash = match state.passwords.hash(reset_password).await {
         Ok(hash) => hash,
         Err(_) => return web::unavailable(),
     };

@@ -74,6 +74,26 @@ fn retry_after_seconds(ttl_ms: i64) -> i64 {
     (ttl_ms.max(1) + 999) / 1000
 }
 
+/// 限流 key 使用的客户端来源：IPv4 取完整地址；IPv6 取 /64 前缀。
+///
+/// 一个用户通常可以自由使用整段 /64，按完整 IPv6 计数等于没有上限。
+/// IPv4-mapped IPv6（`::ffff:a.b.c.d`）按其 IPv4 计数，避免同一来源两种写法各占一份额度。
+pub fn client_bucket(ip: IpAddr) -> String {
+    match ip {
+        IpAddr::V4(v4) => v4.to_string(),
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => v4.to_string(),
+            None => {
+                let segments = v6.segments();
+                format!(
+                    "{:x}:{:x}:{:x}:{:x}::/64",
+                    segments[0], segments[1], segments[2], segments[3]
+                )
+            }
+        },
+    }
+}
+
 /// 规范化账号标识（trim + 小写）后取 sha256 前 16 位十六进制，避免明文标识写入 Redis key。
 pub fn identity_key(identity: &str) -> String {
     let normalized = identity.trim().to_lowercase();
@@ -113,7 +133,12 @@ impl RegisterRateLimiter {
     }
 
     pub async fn try_acquire(&self, ip: IpAddr) -> RateLimitOutcome {
-        let key = format!("{}:{}", self.namespace, ip);
+        self.try_acquire_subject(&client_bucket(ip)).await
+    }
+
+    /// 按任意来源标识计数（例如账号 public_id）；与 [`Self::try_acquire`] 共用窗口与上限。
+    pub async fn try_acquire_subject(&self, subject: &str) -> RateLimitOutcome {
+        let key = format!("{}:{}", self.namespace, subject);
         // 依赖卡住时按不可用处理，绝不无上限放行。
         let count = tokio::time::timeout(
             self.command_timeout,
@@ -169,14 +194,14 @@ impl LoginRateLimiter {
     }
 
     fn ip_key(&self, ip: IpAddr) -> String {
-        format!("{}:login:ip:{}", self.namespace, ip)
+        format!("{}:login:ip:{}", self.namespace, client_bucket(ip))
     }
 
     fn account_key(&self, ip: IpAddr, identity: &str) -> String {
         format!(
             "{}:login:acct:{}:{}",
             self.namespace,
-            ip,
+            client_bucket(ip),
             identity_key(identity)
         )
     }
@@ -257,7 +282,7 @@ pub fn resolve_client_ip(
 
 #[cfg(test)]
 mod tests {
-    use super::{identity_key, resolve_client_ip};
+    use super::{client_bucket, identity_key, resolve_client_ip};
     use axum::http::{HeaderMap, HeaderValue};
     use std::net::IpAddr;
 
@@ -297,6 +322,25 @@ mod tests {
             resolve_client_ip(Some(connect), &headers(Some("not-an-ip")), &trusted),
             connect
         );
+    }
+
+    #[test]
+    fn ipv6_sources_share_one_bucket_per_64() {
+        let parse = |value: &str| value.parse::<IpAddr>().unwrap();
+        // 同一 /64 内任意换地址都落在同一计数器。
+        assert_eq!(
+            client_bucket(parse("2001:db8:1:2::1")),
+            client_bucket(parse("2001:db8:1:2:ffff:abcd:1234:5678"))
+        );
+        assert_eq!(client_bucket(parse("2001:db8:1:2::1")), "2001:db8:1:2::/64");
+        // 相邻 /64 仍是不同来源。
+        assert_ne!(
+            client_bucket(parse("2001:db8:1:2::1")),
+            client_bucket(parse("2001:db8:1:3::1"))
+        );
+        // IPv4 与 IPv4-mapped IPv6 是同一来源。
+        assert_eq!(client_bucket(parse("203.0.113.9")), "203.0.113.9");
+        assert_eq!(client_bucket(parse("::ffff:203.0.113.9")), "203.0.113.9");
     }
 
     #[test]

@@ -23,7 +23,10 @@ use tower_http::timeout::TimeoutLayer;
 use tracing::Instrument;
 use uuid::Uuid;
 
-use crate::config::{Config, REQUEST_BODY_LIMIT_BYTES};
+use crate::config::{
+    Config, PASSWORD_CHANGE_RATE_LIMIT_MAX, PASSWORD_CHANGE_RATE_LIMIT_WINDOW,
+    REQUEST_BODY_LIMIT_BYTES, RESET_PASSWORD_RATE_LIMIT_MAX, RESET_PASSWORD_RATE_LIMIT_WINDOW,
+};
 use crate::error::AppError;
 use crate::media::{ImageStore, MediaService};
 use crate::modules::markers::cache::MarkerCache;
@@ -60,6 +63,10 @@ pub struct AppState {
     pub rate_limiter: RegisterRateLimiter,
     /// 登录失败限流（“IP+账号”与“IP”双计数）。
     pub login_rate_limiter: LoginRateLimiter,
+    /// 已登录改密的原密码校验，按账号计数。
+    pub password_change_rate_limiter: RegisterRateLimiter,
+    /// 邮箱验证码找回密码的提交，按客户端来源计数。
+    pub reset_password_rate_limiter: RegisterRateLimiter,
     /// 图片存储核心（头像/点位图片共用）。
     pub images: ImageStore,
     /// 媒体业务编排（头像、受控 `/uploads` 读取、点位图片提案）。
@@ -110,6 +117,21 @@ impl AppState {
             config.login_rate_limit_window,
             config.redis_command_timeout,
         );
+        // Separate namespaces keep these counters from spending registration quota.
+        let password_change_rate_limiter = RegisterRateLimiter::new(
+            redis.clone(),
+            format!("{}:password-change", config.rate_limit_namespace),
+            PASSWORD_CHANGE_RATE_LIMIT_MAX,
+            PASSWORD_CHANGE_RATE_LIMIT_WINDOW,
+            config.redis_command_timeout,
+        );
+        let reset_password_rate_limiter = RegisterRateLimiter::new(
+            redis.clone(),
+            format!("{}:reset-password", config.rate_limit_namespace),
+            RESET_PASSWORD_RATE_LIMIT_MAX,
+            RESET_PASSWORD_RATE_LIMIT_WINDOW,
+            config.redis_command_timeout,
+        );
         let images = ImageStore::new(&config.upload_dir, config.media_max_concurrency)?;
         let media = MediaService::new(db.clone(), images.clone(), marker_cache);
         Ok(Self {
@@ -123,6 +145,8 @@ impl AppState {
             passwords,
             rate_limiter,
             login_rate_limiter,
+            password_change_rate_limiter,
+            reset_password_rate_limiter,
             images,
             media,
         })

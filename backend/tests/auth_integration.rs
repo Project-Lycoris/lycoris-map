@@ -1606,6 +1606,84 @@ async fn login_rate_limit_blocks_by_ip_across_accounts() {
 }
 
 #[tokio::test]
+async fn new_usernames_cannot_shadow_an_email_identity() {
+    let env = TestEnv::new().await;
+
+    // An email-shaped username is refused before the verification code is spent.
+    let body = register_body(&env, "victim@example.com", "attacker@example.com").await;
+    let refused = env
+        .send(TestRequest::json(
+            Method::POST,
+            "/api/register",
+            body.clone(),
+        ))
+        .await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    assert_eq!(refused.json()["code"], 4005);
+    let mut renamed = body;
+    renamed["username"] = serde_json::json!("attacker");
+    assert_eq!(
+        env.send(TestRequest::json(Method::POST, "/api/register", renamed))
+            .await
+            .status,
+        StatusCode::OK
+    );
+
+    // A historical username containing `@` keeps its address out of new registrations.
+    let hash = PasswordHasher::new(4, 1)
+        .hash("legacy-pass".to_string())
+        .await
+        .unwrap();
+    insert_user(
+        &env.pool,
+        "Legacy@Example.com",
+        "legacy-own@example.com",
+        &hash,
+        "USER",
+    )
+    .await;
+    let taken = register(&env, "newcomer", "legacy@example.com").await;
+    assert_eq!(taken.status, StatusCode::BAD_REQUEST);
+    assert_eq!(taken.json()["code"], 4002);
+    assert_eq!(
+        login(&env, "Legacy@Example.com", "legacy-pass")
+            .await
+            .status,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn password_change_attempts_are_limited_per_account() {
+    let env = TestEnv::new().await;
+    let token = register(&env, "erin", "erin@example.com")
+        .await
+        .session_cookie()
+        .unwrap();
+    let attempt = |token: String| {
+        TestRequest::json(
+            Method::POST,
+            "/api/me/password",
+            serde_json::json!({ "oldPassword": "guess", "newPassword": "new-password" }),
+        )
+        .cookie(token)
+    };
+    for _ in 0..10 {
+        assert_eq!(
+            env.send(attempt(token.clone())).await.status,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    // The eleventh guess never reaches BCrypt, even from another source address.
+    let limited = env
+        .send(attempt(token).connect_ip(IpAddr::from([198, 51, 100, 7])))
+        .await;
+    assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(limited.json()["code"], 42934);
+    assert!(limited.headers.get(header::RETRY_AFTER).is_some());
+}
+
+#[tokio::test]
 async fn changepassword_missing_params_and_wrong_old() {
     let env = TestEnv::new().await;
     let created = register(&env, "dave", "dave@example.com").await;
