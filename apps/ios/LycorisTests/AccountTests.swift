@@ -214,6 +214,43 @@ struct AccountTests {
     #expect(await api.loginFields == ["username": "User@Handle", "password": "  Case Sensitive  "])
   }
 
+  @Test func registrationRefusesEmailShapedUsernamesWithoutLeavingTheCurrentSession() async {
+    let api = AccountFixture()
+    let store = AccountStore(api: api)
+    await store.restore()
+    #expect(
+      !(await store.authenticate(
+        username: "victim@example.test", email: "new@example.test", password: "new-password",
+        register: true, verificationCode: "123456")))
+    #expect(await api.loginFields == nil)
+    #expect(store.user?.publicId == "account-a")
+    #expect(store.message == String(appLocalized: "Usernames can't contain @."))
+    #expect(AccountValidation.newUsername("plain-name"))
+    #expect(!AccountValidation.newUsername("name@"))
+  }
+
+  @Test func serverUsernameRuleIsNotReportedAsADuplicate() async {
+    let api = AccountFixture()
+    await api.reject("api/register", with: AccountFailure(status: 400, code: 4005))
+    let store = AccountStore(api: api)
+    #expect(
+      !(await store.authenticate(
+        username: "fixture", email: "new@example.test", password: "new-password", register: true,
+        verificationCode: "123456")))
+    #expect(store.message == String(appLocalized: "Usernames can't contain @."))
+  }
+
+  @Test func rateLimitedPasswordChangeSaysNothingChangedAndKeepsTheSession() async {
+    let api = AccountFixture()
+    await api.reject(
+      "api/me/password", with: AccountFailure(status: 429, code: 42934, retryAfterSeconds: 900))
+    let store = AccountStore(api: api)
+    await store.restore()
+    #expect(!(await store.changePassword(old: "guess", new: "new-password")))
+    #expect(store.user?.publicId == "account-a")
+    #expect(store.message == String(appLocalized: "Too many attempts. Please try again later."))
+  }
+
   @Test func bookmarkRespondsBeforePreflightAndDoesNotWaitForLibraryRefresh() async throws {
     let api = AccountFixture()
     let store = AccountStore(api: api)
@@ -338,7 +375,9 @@ private actor AccountFixture: AccountServing {
   var loginFields: [String: String]?
   var emailFields: [String: String]?
   var verificationLocked = false
+  var pathFailures: [String: AccountFailure] = [:]
   func lockVerification() { verificationLocked = true }
+  func reject(_ path: String, with failure: AccountFailure) { pathFailures[path] = failure }
   func rejectFavorite(_ status: Int) { favoriteFailure = status }
   func rejectFavoritesRead(_ status: Int) { favoritesReadFailure = status }
   var shouldHold = false
@@ -384,6 +423,7 @@ private actor AccountFixture: AccountServing {
   }
 
   private func response(_ request: AccountRequest) async throws -> Data {
+    if let failure = pathFailures[request.path] { throw failure }
     switch request.path {
     case "api/me":
       if let failure { throw AccountFailure(status: failure) }

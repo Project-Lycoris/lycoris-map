@@ -45,6 +45,42 @@ import XCTest
     XCTAssertEqual(removedResult, .completed)
   }
 
+  /// Register availability is covered by AccountTests: scripted typing into the simulator's
+  /// new-password field keeps only the first character, so no valid password can be entered here.
+  func testRegistrationExplainsTheUsernameRuleWhileTyping() async throws {
+    try await configure(["reset": true, "anonymous": true])
+    let app = launch()
+    let account = app.buttons["map.account"]
+    XCTAssertTrue(account.waitForExistence(timeout: 5))
+    account.tap()
+    let switchMode = app.buttons["auth.switch"]
+    XCTAssertTrue(switchMode.waitForExistence(timeout: 8))
+    switchMode.tap()
+    let email = app.textFields["auth.email"]
+    XCTAssertTrue(email.waitForExistence(timeout: 5))
+    email.tap()
+    // Return moves focus from email to username.
+    email.typeText("new@example.invalid\n")
+    app.typeText("victim")
+    let rule = app.staticTexts["auth.usernameRule"]
+    XCTAssertFalse(rule.exists)
+
+    let username = app.textFields["auth.username"]
+    username.typeText("@")
+    XCTAssertTrue(rule.waitForExistence(timeout: 3))
+    XCTAssertEqual(rule.label, "Usernames can't contain @.")
+    XCTAssertFalse(app.buttons["auth.submit"].isEnabled)
+    attach(app, "register-username-rule")
+
+    username.typeText(XCUIKeyboardKey.delete.rawValue)
+    XCTAssertEqual(username.value as? String, "victim")
+    let cleared = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "exists == false"), object: rule)
+    let clearedResult = await XCTWaiter.fulfillment(of: [cleared], timeout: 3)
+    XCTAssertEqual(clearedResult, .completed)
+    app.buttons["account.close"].tap()
+  }
+
   private func launch() -> XCUIApplication {
     let app = XCUIApplication()
     app.launchArguments = [

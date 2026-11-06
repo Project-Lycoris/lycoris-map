@@ -91,6 +91,11 @@ final class AccountStore {
     username: String, email: String, password: String, register: Bool, verificationCode: String = ""
   ) async -> Bool {
     guard !isBusy else { return false }
+    // Checked before any session change: a refused username leaves the current state intact.
+    if register, !AccountValidation.newUsername(username) {
+      message = AccountFailure(status: 400, code: 4005).message
+      return false
+    }
     isBusy = true
     invalidatePrivateData()
     user = nil
@@ -116,7 +121,7 @@ final class AccountStore {
     } catch {
       await reconcile()
       let failure = error as? AccountFailure
-      if [40021, 40022, 42931, 42932, 50321].contains(failure?.code ?? 0) {
+      if [4005, 40021, 40022, 42931, 42932, 50321].contains(failure?.code ?? 0) {
         message = failureMessage(error)
         if failure?.code == 42931 {
           verificationLockedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -263,14 +268,19 @@ final class AccountStore {
       return true
     } catch {
       guard matches(owner, token) else { return false }
-      if (error as? AccountFailure)?.status == 401 { expire() }
+      let status = (error as? AccountFailure)?.status
+      if status == 401 { expire() }
       message =
-        (error as? AccountFailure)?.status == 400
-        ? String(appLocalized: "Check your current password and the new password.")
-        : String(
-          appLocalized:
-            "The password change could not be confirmed. Check your connection, then try logging in before retrying."
-        )
+        switch status {
+        case 400: String(appLocalized: "Check your current password and the new password.")
+        // Rate limiting happens before the old password is checked, so nothing changed.
+        case 429: AccountFailure(status: 429).message
+        default:
+          String(
+            appLocalized:
+              "The password change could not be confirmed. Check your connection, then try logging in before retrying."
+          )
+        }
       await reconcile()
       return false
     }

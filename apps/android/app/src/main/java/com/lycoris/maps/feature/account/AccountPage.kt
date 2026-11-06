@@ -20,8 +20,11 @@ enum class AccountPage {
 
 internal fun Language.text(chinese: String, english: String): String = if (this == Language.ZH) chinese else english
 
+internal fun Language.usernameRule(): String = text("用户名不能包含 @。", "Usernames can't contain @.")
+
 internal fun accountFailureMessage(failure: ApiFailure, language: Language, page: AccountPage): String = when (failure) {
     is ApiFailure.Http -> when {
+        failure.serviceCode == 4005 -> language.usernameRule()
         failure.serviceCode == 40021 -> language.text("验证码错误或已过期。", "Verification code is invalid or expired.")
         failure.serviceCode == 40022 -> language.text("请输入有效的邮箱地址。", "Enter a valid email address.")
         failure.serviceCode == 42931 -> language.text("验证码错误达到 5 次，已冷却 1 小时。", "Too many incorrect codes. Try again in one hour.")
@@ -45,6 +48,7 @@ internal fun accountFailureMessage(failure: ApiFailure, language: Language, page
     ) else if (failure.timedOut) language.text("请求超时，请重试。", "The request timed out. Please try again.")
     else language.text("无法连接，请检查网络后重试。", "Could not connect. Check your connection and try again.")
     is ApiFailure.InvalidInput -> when (failure.field) {
+        "usernameAt" -> language.usernameRule()
         "verificationCode" -> language.text("请输入 6 位数字验证码。", "Enter the six-digit verification code.")
         "password" -> language.text("密码至少需要 4 个字符，且不能超过 72 个 UTF-8 字节。", "Use at least 4 characters and no more than 72 UTF-8 bytes for the password.")
         "nickname" -> language.text("昵称不能超过 255 个字符。", "The display name must be at most 255 characters.")

@@ -24,6 +24,7 @@ struct AccountFailure: Error, Equatable, Sendable {
 
   var message: String {
     switch code {
+    case 4005: return String(appLocalized: "Usernames can't contain @.")
     case 40021: return String(appLocalized: "Verification code is invalid or expired.")
     case 40022: return String(appLocalized: "Enter a valid email address.")
     case 42931: return String(appLocalized: "Too many incorrect codes. Try again in one hour.")
@@ -153,6 +154,9 @@ extension AccountServing {
 
 enum AccountValidation {
   static func password(_ value: String) -> Bool { value.utf16.count >= 4 && value.utf8.count <= 72 }
+  /// Registration only. Sign-in matches a username or an email, so a new username
+  /// shaped like an address could shadow someone's email; existing ones still sign in.
+  static func newUsername(_ value: String) -> Bool { !value.contains("@") }
   static func profile(nickname: String, pronouns: String, signature: String) -> Bool {
     nickname.unicodeScalars.count <= 255 && pronouns.unicodeScalars.count <= 64
       && signature.unicodeScalars.count <= 200
