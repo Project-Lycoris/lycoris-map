@@ -18,6 +18,18 @@ class AccountPresentationTest {
         assertFalse(text.contains("private/raw/body"))
     }
 
+    @Test fun usernameRuleIsExplainedRatherThanCalledADuplicate() {
+        val server = accountFailureMessage(ApiFailure.Http(400, serviceCode = 4005), Language.ZH, AccountPage.REGISTER)
+        val local = accountFailureMessage(ApiFailure.InvalidInput("usernameAt"), Language.EN, AccountPage.REGISTER)
+        assertEquals("用户名不能包含 @。", server)
+        assertEquals("Usernames can't contain @.", local)
+    }
+
+    @Test fun rateLimitedPasswordChangeIsNotReportedAsUncertain() {
+        val text = accountFailureMessage(ApiFailure.Http(429, serviceCode = 42934, retryAfterSeconds = 900), Language.EN, AccountPage.PASSWORD)
+        assertEquals("Too many attempts. Please try again later.", text)
+    }
+
     @Test fun avatarInitialsKeepUnicodeCodePointsWhole() {
         assertEquals("温", initials("温晓"))
         assertEquals("NS", initials("Nora Smith"))

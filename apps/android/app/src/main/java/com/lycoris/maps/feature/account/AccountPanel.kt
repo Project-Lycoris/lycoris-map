@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lycoris.maps.core.data.AccountRepository
 import com.lycoris.maps.core.data.SessionIdentity
+import com.lycoris.maps.core.data.isRegistrableUsername
 import com.lycoris.maps.core.designsystem.LycorisTextStyles
 import com.lycoris.maps.core.designsystem.LycorisColors
 import com.lycoris.maps.core.media.PhotoFailure
@@ -220,9 +221,11 @@ internal fun RegisterForm(language: Language, busy: Boolean, onSubmit: (String, 
     var password by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
     LaunchedEffect(email) { code = "" }
-    val ready = username.isNotBlank() && email.isNotBlank() && password.isNotEmpty() && code.length == 6 && !busy
+    val usernameRejected = !isRegistrableUsername(username)
+    val ready = username.isNotBlank() && !usernameRejected && email.isNotBlank() && password.isNotEmpty() && code.length == 6 && !busy
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        AccountField(username, { username = it }, language.text("账号", "Username"), enabled = !busy)
+        AccountField(username, { username = it }, language.text("账号", "Username"), enabled = !busy,
+            isError = usernameRejected, supportingText = if (usernameRejected) language.usernameRule() else null)
         AccountField(nickname, { nickname = it }, language.text("昵称（可选）", "Display Name (optional)"), enabled = !busy, capitalization = KeyboardCapitalization.Words)
         AccountField(email, { email = it }, language.text("邮箱", "Email"), enabled = !busy, keyboardType = KeyboardType.Email)
         AccountField(password, { password = it }, language.text("密码", "Password"), enabled = !busy, password = true, language = language,
@@ -413,6 +416,8 @@ private fun AccountField(
     imeAction: ImeAction = ImeAction.Next,
     singleLine: Boolean = true,
     isError: Boolean = false,
+    /** Shown below the field and announced as it appears, so a disabled action has a stated reason. */
+    supportingText: String? = null,
     onDone: () -> Unit = {},
 ) {
     var revealed by remember { mutableStateOf(false) }
@@ -423,6 +428,9 @@ private fun AccountField(
         modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp),
         enabled = enabled,
         label = { Text(label) },
+        supportingText = supportingText?.let { text ->
+            { Text(text, Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+        },
         shape = RoundedCornerShape(16.dp),
         singleLine = singleLine,
         minLines = if (singleLine) 1 else 3,

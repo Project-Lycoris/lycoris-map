@@ -16,6 +16,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.unit.dp
 import com.lycoris.maps.core.designsystem.LycorisTheme
 import com.lycoris.maps.core.model.Language
@@ -78,5 +79,25 @@ class AccountFormsTest {
         compose.onNodeWithText("注册").assertIsNotEnabled()
         compose.onNodeWithText("已有账号？登录").performClick()
         compose.runOnIdle { assertEquals(true, returned) }
+    }
+
+    @Test fun registrationExplainsTheUsernameRuleBeforeSubmitting() {
+        var submitted = 0
+        compose.setContent {
+            LycorisTheme { Surface { Column(Modifier.padding(30.dp)) {
+                RegisterForm(Language.EN, false, { _, _, _, _, _ -> submitted++ }, {}, onSendCode = {})
+            } } }
+        }
+        val username = hasSetTextAction() and hasText("Username")
+        compose.onNode(username).performTextInput("victim@example.test")
+        compose.onNode(hasSetTextAction() and hasText("Email")).performTextInput("new@example.test")
+        compose.onNode(hasSetTextAction() and hasText("Password")).performTextInput("new-password")
+        compose.onNode(hasSetTextAction() and hasText("Verification Code")).performTextInput("123456")
+        compose.onNodeWithText("Usernames can't contain @.").assertExists()
+        compose.onNodeWithText("Register").assertIsNotEnabled()
+        compose.onNode(username).performTextReplacement("victim")
+        compose.onNodeWithText("Usernames can't contain @.").assertDoesNotExist()
+        compose.onNodeWithText("Register").assertIsEnabled().performClick()
+        compose.runOnIdle { assertEquals(1, submitted) }
     }
 }

@@ -484,8 +484,14 @@ private fun String.scalarCount(): Int = codePointCount(0, length)
 private fun validatePassword(password: String) {
     if (password.length < 4 || password.toByteArray(Charsets.UTF_8).size > 72) throw ApiFailure.InvalidInput("password")
 }
+/**
+ * Registration only. Sign-in matches a username or an email, so a new username shaped like an
+ * address could shadow someone's email; existing usernames containing `@` still sign in.
+ */
+fun isRegistrableUsername(username: String): Boolean = '@' !in username
 private fun validateRegistration(username: String, nickname: String, email: String, password: String) {
     if (username.isBlank() || username.trim().scalarCount() > 255) throw ApiFailure.InvalidInput("username")
+    if (!isRegistrableUsername(username)) throw ApiFailure.InvalidInput("usernameAt")
     if (nickname.trim().scalarCount() > 255) throw ApiFailure.InvalidInput("nickname")
     if (email.isBlank() || email.trim().scalarCount() > 255) throw ApiFailure.InvalidInput("email")
     validatePassword(password)

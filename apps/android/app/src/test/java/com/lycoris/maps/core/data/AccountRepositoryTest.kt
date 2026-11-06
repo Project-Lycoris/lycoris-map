@@ -58,6 +58,21 @@ class AccountRepositoryTest {
         assertTrue(registration.body.readUtf8().contains("\"verificationCode\":\"123456\""))
     }
 
+    @Test fun emailShapedUsernameIsRefusedBeforeAnyRequestOrSessionChange() = withRepository { server, repository, jar ->
+        login(server, repository)
+        try {
+            repository.register("victim@example.test", "", "new@example.test", "new-password", "123456")
+            fail("Expected the username rule")
+        } catch (error: ApiFailure.InvalidInput) { assertEquals("usernameAt", error.field) }
+        assertEquals(1, server.requestCount)
+        assertEquals("user-a", repository.state.value.user?.publicId)
+        assertTrue(jar.hasCookies())
+        // Existing usernames containing @ still sign in.
+        server.enqueue(MockResponse().setBody(userA))
+        repository.login("legacy@handle", "synthetic-password")
+        assertTrue(server.takeRequest().body.readUtf8().contains("legacy@handle"))
+    }
+
     @Test fun recoveryClearsOldSessionWithoutAutomaticLogin() = withRepository { server, repository, jar ->
         login(server, repository)
         server.enqueue(MockResponse().setBody("""{"code":0,"data":null}"""))
