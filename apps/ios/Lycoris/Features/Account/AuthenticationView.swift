@@ -63,6 +63,9 @@ private struct CredentialForm: View {
   @FocusState private var focus: Field?
   private enum Field { case email, username, password, code }
   private var unavailable: Bool { store.isBusy || store.isChecking }
+  private var usernameRejected: Bool {
+    registering && !AccountValidation.newUsername(username)
+  }
 
   var body: some View {
     Form {
@@ -91,10 +94,24 @@ private struct CredentialForm: View {
         }
       } footer: {
         if verification {
-          Text("Use at least 4 characters and no more than 72 UTF-8 bytes.")
+          VStack(alignment: .leading, spacing: 4) {
+            if usernameRejected {
+              Text("Usernames can't contain @.")
+                .accessibilityIdentifier("auth.usernameRule")
+            }
+            Text("Use at least 4 characters and no more than 72 UTF-8 bytes.")
+          }
         }
       }
       .disabled(unavailable)
+      .onChange(of: usernameRejected) { _, rejected in
+        // The footer is not read while typing; say why Register stopped being available.
+        if rejected {
+          AccessibilityNotification.Announcement(
+            String(appLocalized: "Usernames can't contain @.")
+          ).post()
+        }
+      }
 
       if verification {
         Section {
@@ -190,7 +207,9 @@ private struct CredentialForm: View {
 
   private var canSubmit: Bool {
     let identity = username.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !identity.isEmpty || resetting, !password.isEmpty, !locked else { return false }
+    guard !identity.isEmpty || resetting, !password.isEmpty, !locked, !usernameRejected else {
+      return false
+    }
     if !verification { return true }
     guard code.count == 6, !resetting || password == confirmation else { return false }
     return identity.unicodeScalars.count <= 255 && email.contains("@")

@@ -13,7 +13,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
 LOCK = threading.Lock()
-STATE = {"owner": str(uuid.uuid4()), "saved": False, "identityDelay": 0, "detailDelay": 0}
+STATE = {"owner": str(uuid.uuid4()), "saved": False, "identityDelay": 0, "detailDelay": 0,
+         "anonymous": False}
 MARKER = {"id": 1, "version": 1, "lat": 31.2304, "lng": 121.4737,
           "category": "accessible_toilet", "title": "Cold Edit Fixture",
           "description": "Controlled native account regression fixture",
@@ -43,7 +44,10 @@ class Handler(BaseHTTPRequestHandler):
             self.reply({"fixture": "lycoris-account-regression", **state})
         elif path == "/api/me":
             time.sleep(state["identityDelay"])
-            self.reply({"code": 0, "data": {"publicId": state["owner"], "username": "UI Fixture"}})
+            if state["anonymous"]:
+                self.reply({"code": 401}, 401)
+            else:
+                self.reply({"code": 0, "data": {"publicId": state["owner"], "username": "UI Fixture"}})
         elif path == "/api/markers/me/favorites/details":
             self.reply([MARKER] if state["saved"] else [])
         elif path == "/api/markers/me/created":
@@ -62,7 +66,10 @@ class Handler(BaseHTTPRequestHandler):
             fields = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
             with LOCK:
                 if fields.pop("reset", False):
-                    STATE.update(owner=str(uuid.uuid4()), saved=False, identityDelay=0, detailDelay=0)
+                    STATE.update(owner=str(uuid.uuid4()), saved=False, identityDelay=0, detailDelay=0,
+                                 anonymous=False)
+                if "anonymous" in fields:
+                    STATE["anonymous"] = bool(fields["anonymous"])
                 for key in ("identityDelay", "detailDelay"):
                     if key in fields:
                         STATE[key] = min(5, max(0, float(fields[key])))
